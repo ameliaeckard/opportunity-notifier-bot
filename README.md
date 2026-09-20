@@ -1,6 +1,12 @@
-# Opportunity Notifier Bot
+# Scout
 
 Discord bot that lets users opt in to personalized internship and hackathon notifications with daily or weekly digests.
+
+Users explicitly opt in, choose the opportunities they want to receive, and select either daily or weekly private Discord digests. Notifications are sent by DM and include quick access to preferences and unsubscribe controls.
+
+### Add Scout to your server
+
+Want Scout in your server? [Add Scout to your server](https://discord.com/oauth2/authorize?client_id=1551281451536752781)
 
 ## What it does
 
