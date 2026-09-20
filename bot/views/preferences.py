@@ -6,6 +6,46 @@ from bot.constants import BUG_REPORT_URL
 from bot.database import Database
 
 
+def opportunity_prompt_embed() -> discord.Embed:
+    embed = discord.Embed(
+        title="Opportunity Notifications",
+        description="Would you like private DMs when new internships or hackathons are found?",
+    )
+    embed.set_footer(text="You must explicitly opt in before any notification is sent.")
+    return embed
+
+
+def preferences_summary_embed(subscriber) -> discord.Embed:
+    categories = []
+    if subscriber.internships_enabled:
+        categories.append("Internships")
+    if subscriber.hackathons_enabled:
+        categories.append("Hackathons")
+    frequency = "Daily" if subscriber.frequency == "daily" else "Weekly on Sundays"
+    embed = discord.Embed(title="Opportunity Notifications")
+    embed.add_field(name="Receiving", value=" and ".join(categories) or "Nothing", inline=False)
+    embed.add_field(name="Frequency", value=frequency, inline=False)
+    embed.set_footer(text="Only your Discord user ID and notification preferences are stored.")
+    return embed
+
+
+async def send_opportunity_setup(interaction: discord.Interaction, database: Database) -> None:
+    subscriber = database.get_subscriber(interaction.user.id)
+    if subscriber and subscriber.opted_in:
+        await interaction.response.send_message(
+            embed=preferences_summary_embed(subscriber),
+            view=PreferencesHomeView(interaction.user.id, database),
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.send_message(
+        embed=opportunity_prompt_embed(),
+        view=OptInView(interaction.user.id, database),
+        ephemeral=True,
+    )
+
+
 class OwnedView(discord.ui.View):
     def __init__(self, owner_id: int, *, timeout: float = 180) -> None:
         super().__init__(timeout=timeout)
@@ -122,6 +162,20 @@ class PreferencesHomeView(OwnedView):
             embed=None,
             view=None,
         )
+
+
+class PublicOpportunitySignupView(discord.ui.View):
+    def __init__(self, database: Database) -> None:
+        super().__init__(timeout=None)
+        self.database = database
+
+    @discord.ui.button(
+        label="Set up notifications",
+        style=discord.ButtonStyle.primary,
+        custom_id="scout:public:opportunity_setup",
+    )
+    async def setup(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
+        await send_opportunity_setup(interaction, self.database)
 
 
 class NotificationControlsView(discord.ui.View):

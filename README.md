@@ -1,5 +1,3 @@
-<img width="2172" height="724" alt="scoutbanner" src="https://github.com/user-attachments/assets/e4caf846-ade1-4b73-bf0a-5e861409434c" />
-
 # Scout
 
 Discord bot that lets users opt in to personalized internship and hackathon notifications with daily or weekly digests.
@@ -15,6 +13,7 @@ Found a problem? [Report a bug](https://ameliaeckard.com/bug/)
 ## What it does
 
 - `/opportunities` opens a private, ephemeral setup flow.
+- `/postopportunities` lets a server manager post a persistent public opt-in panel. Students click the button and complete the same setup privately.
 - Users choose Internships, Hackathons, or Both.
 - Users choose Daily or Weekly delivery.
 - Weekly digests are sent on Sundays.

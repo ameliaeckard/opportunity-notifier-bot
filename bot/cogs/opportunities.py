@@ -8,7 +8,7 @@ from bot.database import Database
 from bot.notifications import digest_embed
 from bot.source_service import SourceService
 from bot.views.digests import PreviewPagerView
-from bot.views.preferences import OptInView, PreferencesHomeView
+from bot.views.preferences import PublicOpportunitySignupView, opportunity_prompt_embed, send_opportunity_setup
 
 
 class OpportunitiesCog(commands.Cog):
@@ -19,24 +19,19 @@ class OpportunitiesCog(commands.Cog):
 
     @app_commands.command(name="opportunities", description="Set or review your private opportunity notification preferences.")
     async def opportunities(self, interaction: discord.Interaction) -> None:
-        subscriber = self.database.get_subscriber(interaction.user.id)
-        if subscriber and subscriber.opted_in:
-            categories = []
-            if subscriber.internships_enabled:
-                categories.append("Internships")
-            if subscriber.hackathons_enabled:
-                categories.append("Hackathons")
-            frequency = "Daily" if subscriber.frequency == "daily" else "Weekly on Sundays"
-            embed = discord.Embed(title="Opportunity Notifications")
-            embed.add_field(name="Receiving", value=" and ".join(categories) or "Nothing", inline=False)
-            embed.add_field(name="Frequency", value=frequency, inline=False)
-            embed.set_footer(text="Only your Discord user ID and notification preferences are stored.")
-            await interaction.response.send_message(embed=embed, view=PreferencesHomeView(interaction.user.id, self.database), ephemeral=True)
-            return
+        await send_opportunity_setup(interaction, self.database)
 
-        embed = discord.Embed(title="Opportunity Notifications", description="Would you like private DMs when new internships or hackathons are found?")
-        embed.set_footer(text="You must explicitly opt in before any notification is sent.")
-        await interaction.response.send_message(embed=embed, view=OptInView(interaction.user.id, self.database), ephemeral=True)
+    @app_commands.command(name="postopportunities", description="Post Scout's reusable opportunity opt-in panel in this channel.")
+    @app_commands.guild_only()
+    @app_commands.default_permissions(manage_guild=True)
+    async def postopportunities(self, interaction: discord.Interaction) -> None:
+        if not interaction.permissions.manage_guild:
+            await interaction.response.send_message("This command requires Manage Server permission.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=opportunity_prompt_embed(),
+            view=PublicOpportunitySignupView(self.database),
+        )
 
     @app_commands.command(name="unsubscribe", description="Stop all opportunity notification DMs.")
     async def unsubscribe(self, interaction: discord.Interaction) -> None:

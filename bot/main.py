@@ -14,7 +14,7 @@ from bot.scheduler import BackgroundScheduler
 from bot.source_service import SourceService
 from bot.sources import HackathonSource, InternshipSource
 from bot.views.digests import DigestPagerView
-from bot.views.preferences import NotificationControlsView
+from bot.views.preferences import NotificationControlsView, PublicOpportunitySignupView
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +33,7 @@ class OpportunityBot(commands.Bot):
     async def setup_hook(self) -> None:
         self.database.initialize()
         self.add_view(NotificationControlsView(self.database))
+        self.add_view(PublicOpportunitySignupView(self.database))
         self.add_view(DigestPagerView(self.database))
         await self.add_cog(OpportunitiesCog(self, self.database, self.source_service))
         await self.source_service.sync_all()
