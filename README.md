@@ -15,7 +15,7 @@ Found a problem? [Report a bug](https://ameliaeckard.com/bug/)
 ## What it does
 
 - `/opportunities` opens a private, ephemeral setup flow.
-- `/postopportunities` lets a server manager post a persistent public opt-in panel. Students click the button and complete the same setup privately.
+- `/postopportunities` lets a server manager post a persistent public opt-in panel. Users click the button and complete the same setup privately.
 - Users choose Internships, Hackathons, or Both.
 - Users choose Daily or Weekly delivery.
 - Weekly digests are sent on Sundays.
