@@ -31,56 +31,51 @@ class OpportunitiesCog(commands.Cog):
             embed.add_field(name="Receiving", value=" and ".join(categories) or "Nothing", inline=False)
             embed.add_field(name="Frequency", value=frequency, inline=False)
             embed.set_footer(text="Only your Discord user ID and notification preferences are stored.")
-            await interaction.response.send_message(
-                embed=embed,
-                view=PreferencesHomeView(interaction.user.id, self.database),
-                ephemeral=True,
-            )
+            await interaction.response.send_message(embed=embed, view=PreferencesHomeView(interaction.user.id, self.database), ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title="Opportunity Notifications",
-            description="Would you like private DMs when new internships or hackathons are found?",
-        )
+        embed = discord.Embed(title="Opportunity Notifications", description="Would you like private DMs when new internships or hackathons are found?")
         embed.set_footer(text="You must explicitly opt in before any notification is sent.")
-        await interaction.response.send_message(
-            embed=embed,
-            view=OptInView(interaction.user.id, self.database),
-            ephemeral=True,
-        )
+        await interaction.response.send_message(embed=embed, view=OptInView(interaction.user.id, self.database), ephemeral=True)
 
     @app_commands.command(name="unsubscribe", description="Stop all opportunity notification DMs.")
     async def unsubscribe(self, interaction: discord.Interaction) -> None:
         self.database.opt_out(interaction.user.id)
         await interaction.response.send_message("You are unsubscribed. No more opportunity DMs will be sent.", ephemeral=True)
 
-    @app_commands.command(name="testrecent", description="Admin test of Scout's current internship and hackathon sources.")
+    @app_commands.command(name="testrecent", description="Admin test of Scout's live internship and hackathon sources.")
+    @app_commands.describe(count="How many recent listings per category to preview, from 5 to 25.")
     @app_commands.guild_only()
     @app_commands.default_permissions(administrator=True)
-    async def testrecent(self, interaction: discord.Interaction) -> None:
+    async def testrecent(self, interaction: discord.Interaction, count: app_commands.Range[int, 5, 25] = 10) -> None:
         if not interaction.permissions.administrator:
             await interaction.response.send_message("This command is only available to server administrators.", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True, thinking=True)
-        preview = await self.source_service.preview_recent(limit=5)
+        preview = await self.source_service.preview_recent(limit=count)
         sent = []
+        missing = []
         try:
             internships = preview.get("internship", [])
             if internships:
                 await interaction.user.send(
-                    embed=digest_embed("internship", internships[0], 0, len(internships), "test"),
+                    embed=digest_embed("internship", internships, 0, "test"),
                     view=PreviewPagerView(interaction.user.id, "internship", internships),
                 )
                 sent.append(f"{len(internships)} recent internships")
+            else:
+                missing.append("internships")
 
             hackathons = preview.get("hackathon", [])
             if hackathons:
                 await interaction.user.send(
-                    embed=digest_embed("hackathon", hackathons[0], 0, len(hackathons), "test"),
+                    embed=digest_embed("hackathon", hackathons, 0, "test"),
                     view=PreviewPagerView(interaction.user.id, "hackathon", hackathons),
                 )
                 sent.append(f"{len(hackathons)} upcoming hackathons")
+            else:
+                missing.append("hackathons")
         except discord.Forbidden:
             await interaction.followup.send("Scout found current opportunities, but Discord blocked the test DM. Make sure you can receive DMs from this server.", ephemeral=True)
             return
@@ -89,6 +84,9 @@ class OpportunitiesCog(commands.Cog):
             return
 
         if sent:
-            await interaction.followup.send(f"Live source check complete. I sent you separate test DMs for {' and '.join(sent)}. This test does not mark anything as delivered.", ephemeral=True)
+            note = f"Live source check complete. I sent you separate test DMs for {' and '.join(sent)}. Each page shows up to 5 listings. This test does not mark anything as delivered."
+            if missing:
+                note += f" No usable {' or '.join(missing)} were returned, so check the Railway source logs."
+            await interaction.followup.send(note, ephemeral=True)
         else:
-            await interaction.followup.send("The live source check completed, but neither source returned usable current opportunities.", ephemeral=True)
+            await interaction.followup.send("The live source check completed, but neither source returned usable current opportunities. Check the Railway source logs.", ephemeral=True)

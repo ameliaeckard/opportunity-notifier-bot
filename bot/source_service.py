@@ -47,28 +47,37 @@ class SourceService:
                 if source.name not in fetched:
                     continue
                 opportunities = fetched[source.name]
+                if not opportunities:
+                    logger.warning("Source %s returned 0 usable current opportunities. Keeping existing source state unchanged.", source.name)
+                    results[source.name] = 0
+                    continue
+
                 initialized = self.database.source_initialized(source.name)
-                inserted = self.database.store_opportunities(opportunities, notify_eligible=initialized)
+                existing_count = self.database.opportunity_count(source.name)
+                recovering_empty_baseline = initialized and existing_count == 0
+                notify_eligible = initialized and not recovering_empty_baseline
+                inserted = self.database.store_opportunities(opportunities, notify_eligible=notify_eligible)
                 self.database.mark_source_checked(source.name, initialized=True)
                 results[source.name] = inserted
-                if initialized:
-                    logger.info("Source %s checked. %s unseen opportunities were added.", source.name, inserted)
+
+                if not initialized:
+                    logger.info("Source %s baseline created with %s current opportunities.", source.name, len(opportunities))
+                elif recovering_empty_baseline:
+                    logger.info("Source %s recovered from an empty baseline with %s current opportunities. They were baselined without notifications.", source.name, len(opportunities))
                 else:
-                    logger.info("Source %s baseline created with %s current opportunities.", source.name, inserted)
+                    logger.info("Source %s checked: %s current opportunities, %s unseen additions.", source.name, len(opportunities), inserted)
+
             self._last_sync_monotonic = time.monotonic()
             return results
 
-    async def preview_recent(self, limit: int = 5) -> dict[str, list[Opportunity]]:
+    async def preview_recent(self, limit: int = 25) -> dict[str, list[Opportunity]]:
         fetched = await self.fetch_current()
         items = list(self._flatten(fetched.values()))
         internships = [item for item in items if item.kind == "internship"]
         hackathons = [item for item in items if item.kind == "hackathon"]
         internships.sort(key=self._internship_recency, reverse=True)
         hackathons.sort(key=lambda item: item.start_date or "9999-12-31T23:59:59Z")
-        return {
-            "internship": internships[:limit],
-            "hackathon": hackathons[:limit],
-        }
+        return {"internship": internships[:limit], "hackathon": hackathons[:limit]}
 
     @staticmethod
     def _flatten(groups: Iterable[list[Opportunity]]) -> Iterable[Opportunity]:

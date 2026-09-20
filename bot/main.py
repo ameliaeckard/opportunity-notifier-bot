@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class OpportunityBot(commands.Bot):
     def __init__(self, config: Config) -> None:
         intents = discord.Intents.none()
+        intents.guilds = True
         super().__init__(command_prefix=commands.when_mentioned, intents=intents)
         self.config = config
         self.database = Database(config.database_path)

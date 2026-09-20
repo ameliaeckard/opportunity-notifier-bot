@@ -11,7 +11,7 @@ from discord.ext import tasks
 from bot.config import Config
 from bot.database import Database
 from bot.models import Opportunity
-from bot.notifications import digest_embed
+from bot.notifications import digest_embed, page_count
 from bot.source_service import SourceService
 from bot.views.digests import DigestPagerView
 
@@ -20,13 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class BackgroundScheduler:
-    def __init__(
-        self,
-        bot: discord.Client,
-        config: Config,
-        database: Database,
-        source_service: SourceService,
-    ) -> None:
+    def __init__(self, bot: discord.Client, config: Config, database: Database, source_service: SourceService) -> None:
         self.bot = bot
         self.config = config
         self.database = database
@@ -82,8 +76,8 @@ class BackgroundScheduler:
         subscribers = self.database.subscribers_for_frequency(frequency)
         logger.info("Running %s digest for %s subscribers.", frequency, len(subscribers))
         for subscriber in subscribers:
-            internships = self.database.pending_opportunities(subscriber, "internship", limit=10) if subscriber.internships_enabled else []
-            hackathons = self.database.pending_opportunities(subscriber, "hackathon", limit=10) if subscriber.hackathons_enabled else []
+            internships = self.database.pending_opportunities(subscriber, "internship", limit=25) if subscriber.internships_enabled else []
+            hackathons = self.database.pending_opportunities(subscriber, "hackathon", limit=25) if subscriber.hackathons_enabled else []
             if not internships and not hackathons:
                 continue
 
@@ -98,25 +92,12 @@ class BackgroundScheduler:
             if hackathons:
                 await self._send_category(user, subscriber.discord_user_id, "hackathon", hackathons, frequency)
 
-    async def _send_category(
-        self,
-        user: discord.User,
-        user_id: int,
-        kind: str,
-        items: list[Opportunity],
-        frequency: str,
-    ) -> None:
+    async def _send_category(self, user: discord.User, user_id: int, kind: str, items: list[Opportunity], frequency: str) -> None:
         try:
             digest_id = self.database.create_digest_batch(user_id, kind, frequency, items)
             message = await user.send(
-                embed=digest_embed(kind, items[0], 0, len(items), frequency),
-                view=DigestPagerView(
-                    self.database,
-                    current_page=0,
-                    total_pages=len(items),
-                    item_url=items[0].url,
-                    kind=kind,
-                ),
+                embed=digest_embed(kind, items, 0, frequency),
+                view=DigestPagerView(self.database, current_page=0, total_pages=page_count(len(items))),
             )
             self.database.attach_digest_message(digest_id, message.id)
             self.database.mark_delivered(user_id, items)

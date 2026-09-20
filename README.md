@@ -108,9 +108,16 @@ Scout also handles temporary Discord startup failures with exponential backoff. 
 
 ## Scheduling behavior
 
+Scout checks its structured sources on a configurable interval, which defaults to once per hour. It does not continuously scrape websites. SimplifyJobs is fetched as one structured listings file and deduplicated by listing ID. Hackalendar is fetched from its structured API, with its documented read-only MCP search used as a fallback if the JSON response cannot be parsed.
+
 Daily subscribers are checked once per day after `DIGEST_HOUR_LOCAL`. Weekly subscribers are checked on Sundays. If a user has no new undelivered opportunities, Scout sends nothing.
 
-Each category currently includes up to 10 new opportunities per digest. If a user subscribes to both categories, Scout sends one Internship DM and one Hackathon DM. The user can page through each list using the navigation buttons.
+Each category can include up to 25 new opportunities per digest. Scout shows up to 5 listings on each page, and Previous and Next move through the digest five listings at a time. If a user subscribes to both categories, Scout sends one Internship DM and one Hackathon DM.
+
+
+### Admin source test
+
+Server administrators can run `/testrecent` to perform a live source check without notifying subscribers or marking listings as delivered. The command accepts a count from 5 to 25 per category and sends separate Internship and Hackathon preview DMs using the same five-listings-per-page layout as real digests.
 
 ## Privacy
 

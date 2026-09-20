@@ -4,27 +4,16 @@ import discord
 
 from bot.constants import BUG_REPORT_URL
 from bot.database import Database
-from bot.notifications import digest_embed
+from bot.notifications import digest_embed, page_count
 from bot.views.preferences import InterestView
 
 
 class DigestPagerView(discord.ui.View):
-    def __init__(
-        self,
-        database: Database,
-        *,
-        current_page: int = 0,
-        total_pages: int = 1,
-        item_url: str | None = None,
-        kind: str = "internship",
-    ) -> None:
+    def __init__(self, database: Database, *, current_page: int = 0, total_pages: int = 1) -> None:
         super().__init__(timeout=None)
         self.database = database
         self.previous.disabled = current_page <= 0
         self.next.disabled = current_page >= total_pages - 1
-        if item_url:
-            label = "View Posting" if kind == "internship" else "View Event"
-            self.add_item(discord.ui.Button(label=label, style=discord.ButtonStyle.link, url=item_url, row=0))
         self.add_item(discord.ui.Button(label="Report Bug", style=discord.ButtonStyle.link, url=BUG_REPORT_URL, row=1))
 
     async def _batch(self, interaction: discord.Interaction):
@@ -48,18 +37,12 @@ class DigestPagerView(discord.ui.View):
         if not items:
             await interaction.response.send_message("This digest has no opportunities.", ephemeral=True)
             return
-        page = max(0, min(batch["current_page"] + offset, len(items) - 1))
+        total_pages = page_count(len(items))
+        page = max(0, min(batch["current_page"] + offset, total_pages - 1))
         self.database.set_digest_page(batch["digest_id"], page)
-        item = items[page]
         await interaction.response.edit_message(
-            embed=digest_embed(batch["kind"], item, page, len(items), batch["frequency"]),
-            view=DigestPagerView(
-                self.database,
-                current_page=page,
-                total_pages=len(items),
-                item_url=item.url,
-                kind=batch["kind"],
-            ),
+            embed=digest_embed(batch["kind"], items, page, batch["frequency"]),
+            view=DigestPagerView(self.database, current_page=page, total_pages=total_pages),
         )
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, custom_id="scout:digest:previous", row=0)
@@ -76,11 +59,7 @@ class DigestPagerView(discord.ui.View):
         if not subscriber or not subscriber.opted_in:
             await interaction.response.send_message("You are not currently subscribed. Run `/opportunities` in a server to opt in.", ephemeral=True)
             return
-        await interaction.response.send_message(
-            "What would you like to receive?",
-            view=InterestView(interaction.user.id, self.database),
-            ephemeral=True,
-        )
+        await interaction.response.send_message("What would you like to receive?", view=InterestView(interaction.user.id, self.database), ephemeral=True)
 
     @discord.ui.button(label="Unsubscribe", style=discord.ButtonStyle.danger, custom_id="scout:digest:unsubscribe", row=1)
     async def unsubscribe(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -95,11 +74,9 @@ class PreviewPagerView(discord.ui.View):
         self.kind = kind
         self.items = items
         self.current_page = current_page
+        total_pages = page_count(len(items))
         self.previous.disabled = current_page <= 0
-        self.next.disabled = current_page >= len(items) - 1
-        item = items[current_page]
-        label = "View Posting" if kind == "internship" else "View Event"
-        self.add_item(discord.ui.Button(label=label, style=discord.ButtonStyle.link, url=item.url, row=0))
+        self.next.disabled = current_page >= total_pages - 1
         self.add_item(discord.ui.Button(label="Report Bug", style=discord.ButtonStyle.link, url=BUG_REPORT_URL, row=1))
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
@@ -109,10 +86,10 @@ class PreviewPagerView(discord.ui.View):
         return False
 
     async def _move(self, interaction: discord.Interaction, offset: int) -> None:
-        page = max(0, min(self.current_page + offset, len(self.items) - 1))
-        item = self.items[page]
+        total_pages = page_count(len(self.items))
+        page = max(0, min(self.current_page + offset, total_pages - 1))
         await interaction.response.edit_message(
-            embed=digest_embed(self.kind, item, page, len(self.items), "test"),
+            embed=digest_embed(self.kind, self.items, page, "test"),
             view=PreviewPagerView(self.owner_id, self.kind, self.items, page),
         )
 

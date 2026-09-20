@@ -164,6 +164,11 @@ class Database:
             rows = conn.execute("SELECT * FROM subscribers WHERE opted_in = 1 AND frequency = ?", (frequency,)).fetchall()
         return [self._row_to_subscriber(row) for row in rows]
 
+    def opportunity_count(self, source: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) AS count FROM opportunities WHERE source = ?", (source,)).fetchone()
+        return int(row["count"]) if row else 0
+
     def source_initialized(self, source: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("SELECT initialized FROM source_state WHERE source = ?", (source,)).fetchone()
