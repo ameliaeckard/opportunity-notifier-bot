@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -78,20 +79,40 @@ class Database:
                     ran_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS digest_batches (
+                    digest_id TEXT PRIMARY KEY,
+                    discord_user_id INTEGER NOT NULL,
+                    kind TEXT NOT NULL CHECK (kind IN ('internship', 'hackathon')),
+                    frequency TEXT NOT NULL,
+                    current_page INTEGER NOT NULL DEFAULT 0,
+                    message_id INTEGER UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS digest_items (
+                    digest_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    source TEXT NOT NULL,
+                    external_id TEXT NOT NULL,
+                    PRIMARY KEY (digest_id, position),
+                    FOREIGN KEY (digest_id) REFERENCES digest_batches(digest_id) ON DELETE CASCADE,
+                    FOREIGN KEY (source, external_id) REFERENCES opportunities(source, external_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_opportunities_kind_discovered
                 ON opportunities(kind, discovered_at);
 
                 CREATE INDEX IF NOT EXISTS idx_subscribers_frequency
                 ON subscribers(opted_in, frequency);
+
+                CREATE INDEX IF NOT EXISTS idx_digest_batches_message
+                ON digest_batches(message_id);
                 """
             )
 
     def get_subscriber(self, user_id: int) -> Subscriber | None:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM subscribers WHERE discord_user_id = ?",
-                (user_id,),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM subscribers WHERE discord_user_id = ?", (user_id,)).fetchone()
         return self._row_to_subscriber(row) if row else None
 
     def save_preferences(self, user_id: int, internships: bool, hackathons: bool, frequency: str) -> None:
@@ -140,18 +161,12 @@ class Database:
 
     def subscribers_for_frequency(self, frequency: str) -> list[Subscriber]:
         with self._connect() as conn:
-            rows = conn.execute(
-                "SELECT * FROM subscribers WHERE opted_in = 1 AND frequency = ?",
-                (frequency,),
-            ).fetchall()
+            rows = conn.execute("SELECT * FROM subscribers WHERE opted_in = 1 AND frequency = ?", (frequency,)).fetchall()
         return [self._row_to_subscriber(row) for row in rows]
 
     def source_initialized(self, source: str) -> bool:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT initialized FROM source_state WHERE source = ?",
-                (source,),
-            ).fetchone()
+            row = conn.execute("SELECT initialized FROM source_state WHERE source = ?", (source,)).fetchone()
         return bool(row and row["initialized"])
 
     def mark_source_checked(self, source: str, initialized: bool = True) -> None:
@@ -238,20 +253,67 @@ class Database:
                 (delivered_at, delivered_at, user_id),
             )
 
+    def create_digest_batch(self, user_id: int, kind: str, frequency: str, items: list[Opportunity]) -> str:
+        if not items:
+            raise ValueError("A digest batch requires at least one opportunity.")
+        digest_id = uuid.uuid4().hex
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO digest_batches(digest_id, discord_user_id, kind, frequency, current_page, created_at)
+                VALUES (?, ?, ?, ?, 0, ?)
+                """,
+                (digest_id, user_id, kind, frequency, utc_now_iso()),
+            )
+            conn.executemany(
+                """
+                INSERT INTO digest_items(digest_id, position, source, external_id)
+                VALUES (?, ?, ?, ?)
+                """,
+                [(digest_id, index, item.source, item.external_id) for index, item in enumerate(items)],
+            )
+        return digest_id
+
+    def attach_digest_message(self, digest_id: str, message_id: int) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE digest_batches SET message_id = ? WHERE digest_id = ?", (message_id, digest_id))
+
+    def set_digest_page(self, digest_id: str, page: int) -> None:
+        with self._connect() as conn:
+            conn.execute("UPDATE digest_batches SET current_page = ? WHERE digest_id = ?", (page, digest_id))
+
+    def get_digest_by_message(self, message_id: int) -> dict[str, object] | None:
+        with self._connect() as conn:
+            batch = conn.execute("SELECT * FROM digest_batches WHERE message_id = ?", (message_id,)).fetchone()
+            if not batch:
+                return None
+            rows = conn.execute(
+                """
+                SELECT o.*
+                FROM digest_items di
+                JOIN opportunities o ON o.source = di.source AND o.external_id = di.external_id
+                WHERE di.digest_id = ?
+                ORDER BY di.position ASC
+                """,
+                (batch["digest_id"],),
+            ).fetchall()
+        return {
+            "digest_id": batch["digest_id"],
+            "discord_user_id": int(batch["discord_user_id"]),
+            "kind": batch["kind"],
+            "frequency": batch["frequency"],
+            "current_page": int(batch["current_page"]),
+            "items": [self._row_to_opportunity(row) for row in rows],
+        }
+
     def scheduler_run_exists(self, run_key: str) -> bool:
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM scheduler_runs WHERE run_key = ?",
-                (run_key,),
-            ).fetchone()
+            row = conn.execute("SELECT 1 FROM scheduler_runs WHERE run_key = ?", (run_key,)).fetchone()
         return row is not None
 
     def mark_scheduler_run(self, run_key: str) -> None:
         with self._connect() as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO scheduler_runs(run_key, ran_at) VALUES (?, ?)",
-                (run_key, utc_now_iso()),
-            )
+            conn.execute("INSERT OR IGNORE INTO scheduler_runs(run_key, ran_at) VALUES (?, ?)", (run_key, utc_now_iso()))
 
     @staticmethod
     def _row_to_subscriber(row: sqlite3.Row) -> Subscriber:

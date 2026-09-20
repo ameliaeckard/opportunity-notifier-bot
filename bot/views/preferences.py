@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import discord
 
+from bot.constants import BUG_REPORT_URL
 from bot.database import Database
 
 
@@ -127,6 +128,7 @@ class NotificationControlsView(discord.ui.View):
     def __init__(self, database: Database) -> None:
         super().__init__(timeout=None)
         self.database = database
+        self.add_item(discord.ui.Button(label="Report Bug", style=discord.ButtonStyle.link, url=BUG_REPORT_URL, row=1))
 
     @discord.ui.button(
         label="Preferences",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -9,9 +10,10 @@ from discord.ext import tasks
 
 from bot.config import Config
 from bot.database import Database
-from bot.notifications import hackathon_embed, internship_embed
+from bot.models import Opportunity
+from bot.notifications import digest_embed
 from bot.source_service import SourceService
-from bot.views.preferences import NotificationControlsView
+from bot.views.digests import DigestPagerView
 
 
 logger = logging.getLogger(__name__)
@@ -40,13 +42,14 @@ class BackgroundScheduler:
         self.source_poll.cancel()
         self.digest_check.cancel()
 
-    @tasks.loop(minutes=15)
+    @tasks.loop(minutes=60)
     async def source_poll(self) -> None:
         await self.source_service.sync_all()
 
     @source_poll.before_loop
     async def before_source_poll(self) -> None:
         await self.bot.wait_until_ready()
+        await asyncio.sleep(self.config.source_poll_minutes * 60)
 
     @tasks.loop(minutes=5)
     async def digest_check(self) -> None:
@@ -55,15 +58,21 @@ class BackgroundScheduler:
             return
 
         daily_key = f"daily:{now.date().isoformat()}"
-        if not self.database.scheduler_run_exists(daily_key):
+        weekly_key = f"weekly:{now.date().isoformat()}"
+        run_daily = not self.database.scheduler_run_exists(daily_key)
+        run_weekly = now.weekday() == 6 and not self.database.scheduler_run_exists(weekly_key)
+        if not run_daily and not run_weekly:
+            return
+
+        await self.source_service.sync_all()
+
+        if run_daily:
             await self._send_frequency("daily")
             self.database.mark_scheduler_run(daily_key)
 
-        if now.weekday() == 6:
-            weekly_key = f"weekly:{now.date().isoformat()}"
-            if not self.database.scheduler_run_exists(weekly_key):
-                await self._send_frequency("weekly")
-                self.database.mark_scheduler_run(weekly_key)
+        if run_weekly:
+            await self._send_frequency("weekly")
+            self.database.mark_scheduler_run(weekly_key)
 
     @digest_check.before_loop
     async def before_digest_check(self) -> None:
@@ -73,41 +82,47 @@ class BackgroundScheduler:
         subscribers = self.database.subscribers_for_frequency(frequency)
         logger.info("Running %s digest for %s subscribers.", frequency, len(subscribers))
         for subscriber in subscribers:
-            internships = (
-                self.database.pending_opportunities(subscriber, "internship", limit=10)
-                if subscriber.internships_enabled
-                else []
-            )
-            hackathons = (
-                self.database.pending_opportunities(subscriber, "hackathon", limit=10)
-                if subscriber.hackathons_enabled
-                else []
-            )
+            internships = self.database.pending_opportunities(subscriber, "internship", limit=10) if subscriber.internships_enabled else []
+            hackathons = self.database.pending_opportunities(subscriber, "hackathon", limit=10) if subscriber.hackathons_enabled else []
             if not internships and not hackathons:
                 continue
 
-            embeds: list[discord.Embed] = []
-            if internships:
-                embeds.append(internship_embed(internships))
-            if hackathons:
-                embeds.append(hackathon_embed(hackathons))
-            for embed in embeds:
-                label = "Daily" if frequency == "daily" else "Weekly"
-                embed.set_footer(text=f"You're receiving the {label} digest.")
-
             try:
                 user = self.bot.get_user(subscriber.discord_user_id) or await self.bot.fetch_user(subscriber.discord_user_id)
-                await user.send(
-                    embeds=embeds,
-                    view=NotificationControlsView(self.database),
-                )
-                self.database.mark_delivered(
-                    subscriber.discord_user_id,
-                    [*internships, *hackathons],
-                )
-            except discord.Forbidden:
-                logger.warning("Could not DM user %s. DMs may be disabled.", subscriber.discord_user_id)
             except discord.HTTPException:
-                logger.exception("Discord API error while messaging user %s.", subscriber.discord_user_id)
-            except Exception:
-                logger.exception("Unexpected error while messaging user %s.", subscriber.discord_user_id)
+                logger.exception("Could not fetch Discord user %s.", subscriber.discord_user_id)
+                continue
+
+            if internships:
+                await self._send_category(user, subscriber.discord_user_id, "internship", internships, frequency)
+            if hackathons:
+                await self._send_category(user, subscriber.discord_user_id, "hackathon", hackathons, frequency)
+
+    async def _send_category(
+        self,
+        user: discord.User,
+        user_id: int,
+        kind: str,
+        items: list[Opportunity],
+        frequency: str,
+    ) -> None:
+        try:
+            digest_id = self.database.create_digest_batch(user_id, kind, frequency, items)
+            message = await user.send(
+                embed=digest_embed(kind, items[0], 0, len(items), frequency),
+                view=DigestPagerView(
+                    self.database,
+                    current_page=0,
+                    total_pages=len(items),
+                    item_url=items[0].url,
+                    kind=kind,
+                ),
+            )
+            self.database.attach_digest_message(digest_id, message.id)
+            self.database.mark_delivered(user_id, items)
+        except discord.Forbidden:
+            logger.warning("Could not DM user %s. DMs may be disabled.", user_id)
+        except discord.HTTPException:
+            logger.exception("Discord API error while messaging user %s.", user_id)
+        except Exception:
+            logger.exception("Unexpected error while messaging user %s.", user_id)

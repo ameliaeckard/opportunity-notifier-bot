@@ -16,6 +16,8 @@ def test_internship_parser_filters_inactive_and_wrong_term():
             "url": "https://example.com/1",
             "locations": ["Charlotte, NC", "Remote"],
             "source": "Simplify",
+            "date_posted": 1780000000,
+            "date_updated": 1780000100,
         },
         {
             "id": "2",
@@ -43,6 +45,7 @@ def test_internship_parser_filters_inactive_and_wrong_term():
     assert len(parsed) == 1
     assert parsed[0].organization == "NVIDIA"
     assert parsed[0].location == "Charlotte, NC / Remote"
+    assert parsed[0].metadata["date_updated"] == 1780000100
 
 
 def test_hackathon_parser_keeps_upcoming_event():

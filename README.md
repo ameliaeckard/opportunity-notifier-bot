@@ -1,20 +1,38 @@
-# Opportunity Notifier Bot
+# Scout
 
-A privacy-conscious Discord bot that lets students explicitly opt in to private internship and hackathon notifications.
+Discord bot that lets users opt in to personalized internship and hackathon notifications with daily or weekly digests.
+
+Users explicitly opt in, choose the opportunities they want to receive, and select either daily or weekly private Discord digests. Notifications are sent by DM and include quick access to preferences, unsubscribe controls, and bug reporting.
+
+### Add Scout to your server
+
+Want Scout in your server? [Add Scout to your server](https://discord.com/oauth2/authorize?client_id=1551281451536752781&permissions=19456&integration_type=0&scope=bot+applications.commands)
+
+Found a problem? [Report a bug](https://ameliaeckard.com/bug/)
 
 ## What it does
 
 - `/opportunities` opens a private, ephemeral setup flow.
-- Students choose whether to opt in.
-- Students choose Internships, Hackathons, or Both.
-- Students choose Daily or Weekly delivery.
+- Users choose Internships, Hackathons, or Both.
+- Users choose Daily or Weekly delivery.
 - Weekly digests are sent on Sundays.
-- Digests are sent only by Discord DM.
-- Every notification includes Preferences and Unsubscribe buttons.
+- Digests are sent only via Discord DM.
+- Internship and hackathon digests are sent as separate messages.
+- Each digest works like a small book with Previous and Next controls, one opportunity per page, and a direct View Posting or View Event button.
+- Digest controls include Preferences, Unsubscribe, and Report Bug.
 - `/unsubscribe` stops all notification DMs immediately.
-- SQLite stores only the Discord user ID, notification preferences, timestamps, source state, and delivery history.
+- `/testrecent` lets a server administrator run a live source test and receive separate private preview DMs without marking anything as delivered.
+- SQLite stores Discord user IDs, preferences, source state, delivery history, and digest navigation state.
 - New items are deduplicated before delivery.
-- The first successful source sync becomes a baseline, so existing listings are not blasted to students as if they were new.
+- The first successful source sync becomes a baseline, so existing listings are not sent as if they were new.
+
+## How source checking works
+
+Scout does not continuously search the web. It checks its structured sources periodically, with a default interval of 60 minutes, and compares stable source IDs against the records already stored in SQLite. Only unseen opportunities are added as new.
+
+Scout also performs one source refresh immediately before a scheduled digest so the daily or Sunday message uses the latest available source data. The first scheduled background poll is delayed after startup so the initial baseline sync is not immediately repeated.
+
+For admin testing, `/testrecent` performs a live read without changing delivery history. It previews the most recently updated internship listings and the next upcoming hackathons.
 
 ## Data sources
 
@@ -24,44 +42,23 @@ Internships are read from the public `dev` branch of [SimplifyJobs Summer 2027 I
 
 ### Hackathons
 
-Hackathons are read from the public [Hackalendar API](https://hackalendar.com/api). It provides upcoming, human-verified events as structured data without an API key and links users back to organiser registration pages.
+Hackathons are read from the public [Hackalendar API](https://hackalendar.com/api). It provides upcoming, human-verified events as structured data without an API key and links users back to organizer registration pages.
 
-This project does not scrape Devpost.
+Scout does not scrape Devpost.
 
-## Project structure
+## Discord commands
 
-```text
-bot/
-  cogs/
-    opportunities.py
-  sources/
-    base.py
-    internships.py
-    hackathons.py
-  views/
-    preferences.py
-  config.py
-  database.py
-  main.py
-  models.py
-  notifications.py
-  scheduler.py
-  source_service.py
-tests/
-  test_database.py
-  test_sources.py
-.env.example
-railway.json
-requirements.txt
-```
+- `/opportunities`: Opt in, review preferences, or change notification settings.
+- `/unsubscribe`: Stop all Scout notification DMs.
+- `/testrecent`: Administrator-only live test of both opportunity sources. The results are sent privately to the administrator and do not affect subscriber delivery state.
 
 ## Local setup
 
 1. Create a Discord application and bot in the Discord Developer Portal.
-2. Add the bot to your class server with the `bot` and `applications.commands` scopes.
+2. Add the bot to your server with the `bot` and `applications.commands` scopes.
 3. Copy `.env.example` to `.env`.
 4. Put your bot token in `DISCORD_TOKEN`.
-5. Optionally set `DISCORD_GUILD_ID` to your class server ID while testing. Guild-scoped commands appear quickly. Leave it blank for global command sync.
+5. Optionally set `DISCORD_GUILD_ID` to your server ID while testing. Guild-scoped commands appear quickly. Leave it blank for global command sync.
 6. Install dependencies and start the bot.
 
 ```bash
@@ -79,65 +76,60 @@ On Windows PowerShell, activate the environment with:
 
 ## Environment variables
 
-| Variable | Required | Default | Purpose |
-| --- | --- | --- | --- |
-| `DISCORD_TOKEN` | Yes | None | Discord bot token |
-| `DISCORD_GUILD_ID` | No | None | Optional test guild for faster slash command sync |
-| `DATABASE_PATH` | No | `./data/opportunity_notifier.db` | SQLite database path |
-| `BOT_TIMEZONE` | No | `America/New_York` | Timezone used for digest scheduling |
-| `DIGEST_HOUR_LOCAL` | No | `9` | Local hour when digests become eligible to run |
-| `SOURCE_POLL_MINUTES` | No | `15` | How often the bot checks sources for additions |
-| `LOG_LEVEL` | No | `INFO` | Python logging level |
+```text
+DISCORD_TOKEN=
+DISCORD_GUILD_ID=
+DATABASE_PATH=./data/opportunity_notifier.db
+BOT_TIMEZONE=America/New_York
+DIGEST_HOUR_LOCAL=9
+SOURCE_POLL_MINUTES=60
+LOG_LEVEL=INFO
+```
 
-## Railway deployment
+`SOURCE_POLL_MINUTES` must be at least 15 minutes. The default is 60 minutes.
 
-This repository includes `railway.json`. Railway will use Railpack and start the service with:
+## Railway
+
+Scout is configured for Railway through `railway.json` and starts with:
 
 ```text
 python -m bot.main
 ```
 
-In Railway:
+For SQLite persistence, add a Railway volume mounted at `/data` and set:
 
-1. Create a new project from this GitHub repository.
-2. Add `DISCORD_TOKEN` as a Railway variable.
-3. Add the other variables from `.env.example` as needed.
-4. Add a persistent Railway volume.
-5. Mount the volume at `/data`.
-6. Set `DATABASE_PATH=/data/opportunity_notifier.db`.
-7. Deploy one replica of the bot service.
+```text
+DATABASE_PATH=/data/opportunity_notifier.db
+```
 
-SQLite must live on a persistent volume in Railway. Without a volume, preferences and duplicate history can be lost when a deployment is replaced.
+Keep the service at one replica while using SQLite.
 
-Keep this bot at one Railway replica while using SQLite. Multiple replicas would need a shared database such as Postgres plus scheduler coordination to avoid duplicate sends.
+Scout also handles temporary Discord startup failures with exponential backoff. Instead of immediately crashing and causing a rapid Railway restart loop, it waits 60 seconds and increases the delay up to 15 minutes between retry attempts. Invalid bot tokens still fail immediately so configuration errors are visible.
 
 ## Scheduling behavior
 
-The source poller checks for additions throughout the day. The digest scheduler runs after `DIGEST_HOUR_LOCAL` in `BOT_TIMEZONE` and records each daily or weekly scheduler run in SQLite so a restart does not cause the same scheduled run to execute twice.
+Daily subscribers are checked once per day after `DIGEST_HOUR_LOCAL`. Weekly subscribers are checked on Sundays. If a user has no new undelivered opportunities, Scout sends nothing.
 
-Daily subscribers are checked every day. Weekly subscribers are checked on Sundays. If a student has no new undelivered opportunities, the bot sends nothing.
+Each category currently includes up to 10 new opportunities per digest. If a user subscribes to both categories, Scout sends one Internship DM and one Hackathon DM. The user can page through each list using the navigation buttons.
 
-Each digest currently includes up to 10 new internships and up to 10 new hackathons. Additional undelivered items remain queued for a later digest.
+## Privacy
 
-## Privacy notes
+Scout does not store Discord usernames, email addresses, message content, or public user profiles. It stores Discord user IDs because Discord requires them to associate preferences and deliver private notifications.
 
-The bot does not store Discord usernames, email addresses, message content, or public student profiles. It stores Discord user IDs only because Discord needs the user ID to deliver the DM and associate preferences with the correct account.
-
-Students must explicitly opt in. They can change preferences with `/opportunities`, use the Preferences button in a DM, use the Unsubscribe button in a DM, or run `/unsubscribe`.
+Users must explicitly opt in and can unsubscribe at any time.
 
 ## Tests
 
 Run:
 
 ```bash
-pytest
+python -m pytest
 ```
 
-The included tests cover preference storage, delivery deduplication, first-sync baseline behavior, and source parsing.
+Tests cover preference storage, delivery deduplication, first-sync baseline behavior, digest navigation persistence, source parsing, and digest formatting.
 
 ## Notes
 
 - No GitHub Actions are used.
-- Logging goes to stdout so Railway can collect it.
-- The bot does not require the privileged Message Content intent.
-- Source failures are logged and do not automatically initialize a failed source baseline.
+- Logging goes to stdout for Railway.
+- Scout does not require the privileged Message Content intent.

@@ -49,3 +49,41 @@ def test_initial_source_baseline_is_not_notified(tmp_path):
     subscriber = database.get_subscriber(456)
     assert subscriber is not None
     assert database.pending_opportunities(subscriber, "internship") == []
+
+
+def test_digest_batch_tracks_pages_by_message(tmp_path):
+    database = Database(str(tmp_path / "test.db"))
+    database.initialize()
+    items = [
+        Opportunity(
+            source="test",
+            external_id="one",
+            kind="internship",
+            organization="One Co",
+            title="Intern One",
+            location="Remote",
+            url="https://example.com/one",
+        ),
+        Opportunity(
+            source="test",
+            external_id="two",
+            kind="internship",
+            organization="Two Co",
+            title="Intern Two",
+            location="Charlotte, NC",
+            url="https://example.com/two",
+        ),
+    ]
+    database.store_opportunities(items, notify_eligible=True)
+    digest_id = database.create_digest_batch(999, "internship", "daily", items)
+    database.attach_digest_message(digest_id, 123456)
+
+    batch = database.get_digest_by_message(123456)
+    assert batch is not None
+    assert batch["current_page"] == 0
+    assert [item.external_id for item in batch["items"]] == ["one", "two"]
+
+    database.set_digest_page(digest_id, 1)
+    batch = database.get_digest_by_message(123456)
+    assert batch is not None
+    assert batch["current_page"] == 1

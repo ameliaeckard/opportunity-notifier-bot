@@ -32,9 +32,9 @@ class Config:
         if not 0 <= digest_hour <= 23:
             raise ValueError("DIGEST_HOUR_LOCAL must be between 0 and 23.")
 
-        poll_minutes = int(os.getenv("SOURCE_POLL_MINUTES", "15"))
-        if poll_minutes < 5:
-            raise ValueError("SOURCE_POLL_MINUTES must be at least 5.")
+        poll_minutes = int(os.getenv("SOURCE_POLL_MINUTES", "60"))
+        if poll_minutes < 15:
+            raise ValueError("SOURCE_POLL_MINUTES must be at least 15.")
 
         return cls(
             discord_token=token,

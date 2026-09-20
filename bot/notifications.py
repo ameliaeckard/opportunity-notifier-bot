@@ -4,11 +4,8 @@ from datetime import datetime
 
 import discord
 
+from bot.constants import HACKALENDAR_URL, SIMPLIFY_REPO_URL
 from bot.models import Opportunity
-
-
-HACKATHON_SOURCE = "https://hackalendar.com"
-SIMPLIFY_REPO = "https://github.com/SimplifyJobs/Summer2027-Internships"
 
 
 def _format_date(value: str | None) -> str | None:
@@ -21,28 +18,29 @@ def _format_date(value: str | None) -> str | None:
         return value
 
 
-def internship_embed(items: list[Opportunity]) -> discord.Embed:
-    embed = discord.Embed(title="New Opportunities", description=f"**Internships: {len(items)} new**")
-    for item in items:
-        embed.add_field(
-            name=item.organization,
-            value=f"{item.title}\n{item.location}\n[View Posting]({item.url})",
-            inline=False,
-        )
-    embed.add_field(name="Source", value=f"[SimplifyJobs Summer 2027 Internships]({SIMPLIFY_REPO})", inline=False)
-    return embed
-
-
-def hackathon_embed(items: list[Opportunity]) -> discord.Embed:
-    embed = discord.Embed(title="New Opportunities", description=f"**Hackathons: {len(items)} new**")
-    for item in items:
+def digest_embed(kind: str, item: Opportunity, page: int, total: int, frequency: str) -> discord.Embed:
+    if kind == "internship":
+        embed = discord.Embed(title=f"Internships: {total} new")
+        embed.add_field(name=item.organization, value=item.title, inline=False)
+        embed.add_field(name="Location", value=item.location, inline=False)
+        embed.add_field(name="Source", value=f"[SimplifyJobs Summer 2027 Internships]({SIMPLIFY_REPO_URL})", inline=False)
+    elif kind == "hackathon":
+        embed = discord.Embed(title=f"Hackathons: {total} new")
         start = _format_date(item.start_date)
         end = _format_date(item.end_date)
         date_line = f"{start} to {end}" if start and end else start or end or "Date not listed"
-        embed.add_field(
-            name=item.organization,
-            value=f"{date_line}\n{item.location}\n[View Event]({item.url})",
-            inline=False,
-        )
-    embed.add_field(name="Source", value=f"[Hackalendar]({HACKATHON_SOURCE})", inline=False)
+        embed.add_field(name=item.organization, value=item.title, inline=False)
+        embed.add_field(name="Dates", value=date_line, inline=False)
+        embed.add_field(name="Location", value=item.location, inline=False)
+        embed.add_field(name="Source", value=f"[Hackalendar]({HACKALENDAR_URL})", inline=False)
+    else:
+        raise ValueError("kind must be internship or hackathon")
+
+    if frequency == "daily":
+        label = "Daily digest"
+    elif frequency == "weekly":
+        label = "Weekly digest"
+    else:
+        label = "Admin test"
+    embed.set_footer(text=f"{label} • Page {page + 1} of {total} • Report a bug below")
     return embed
