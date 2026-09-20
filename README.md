@@ -6,7 +6,7 @@ Users explicitly opt in, choose the opportunities they want to receive, and sele
 
 ### Add Scout to your server
 
-Want Scout in your server? [Add Scout to your server]([https://discord.com/oauth2/authorize?client_id=1551281451536752781](https://discord.com/oauth2/authorize?client_id=1551281451536752781&permissions=19456&integration_type=0&scope=bot+applications.commands))
+Want Scout in your server? [Add Scout to your server](https://discord.com/oauth2/authorize?client_id=1551281451536752781&permissions=19456&integration_type=0&scope=bot+applications.commands)
 
 ## What it does
 
