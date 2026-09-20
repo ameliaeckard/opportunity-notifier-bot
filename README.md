@@ -1,3 +1,5 @@
+<img width="2172" height="724" alt="scoutbanner" src="https://github.com/user-attachments/assets/e5960c47-2fc9-4d52-982a-a1053c801990" />
+
 # Scout
 
 Discord bot that lets users opt in to personalized internship and hackathon notifications with daily or weekly digests.
