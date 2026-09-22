@@ -12,14 +12,15 @@ from bot.views.preferences import PublicOpportunitySignupView, opportunity_promp
 
 
 class OpportunitiesCog(commands.Cog):
-    def __init__(self, bot: commands.Bot, database: Database, source_service: SourceService) -> None:
+    def __init__(self, bot: commands.Bot, database: Database, source_service: SourceService, student_added_webhook_url: str | None = None) -> None:
         self.bot = bot
         self.database = database
         self.source_service = source_service
+        self.student_added_webhook_url = student_added_webhook_url
 
     @app_commands.command(name="opportunities", description="Set or review your private opportunity notification preferences.")
     async def opportunities(self, interaction: discord.Interaction) -> None:
-        await send_opportunity_setup(interaction, self.database)
+        await send_opportunity_setup(interaction, self.database, self.student_added_webhook_url)
 
     @app_commands.command(name="postopportunities", description="Post Scout's reusable opportunity opt-in panel in this channel.")
     @app_commands.guild_only()
@@ -30,7 +31,7 @@ class OpportunitiesCog(commands.Cog):
             return
         await interaction.response.send_message(
             embed=opportunity_prompt_embed(),
-            view=PublicOpportunitySignupView(self.database),
+            view=PublicOpportunitySignupView(self.database, self.student_added_webhook_url),
         )
 
     @app_commands.command(name="unsubscribe", description="Stop all opportunity notification DMs.")

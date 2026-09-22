@@ -33,16 +33,12 @@ class HackathonSource(OpportunitySource):
             "jsonrpc": "2.0",
             "id": 1,
             "method": "tools/call",
-            "params": {
-                "name": "search_hackathons",
-                "arguments": {"limit": 50},
-            },
+            "params": {"name": "search_hackathons", "arguments": {"limit": 50}},
         }
         async with session.post(self.mcp_url, json=mcp_payload) as response:
             response.raise_for_status()
             fallback_payload = await response.json(content_type=None)
-        fallback_events = self._extract_mcp_events(fallback_payload)
-        return self.parse(fallback_events)
+        return self.parse(self._extract_mcp_events(fallback_payload))
 
     @classmethod
     def _extract_mcp_events(cls, payload: Any) -> list[dict[str, Any]]:
@@ -51,13 +47,11 @@ class HackathonSource(OpportunitySource):
         result = payload.get("result")
         if not isinstance(result, dict):
             return []
-
         structured = result.get("structuredContent") or result.get("structured_content")
         if isinstance(structured, dict) and isinstance(structured.get("events"), list):
             return structured["events"]
         if isinstance(result.get("events"), list):
             return result["events"]
-
         content = result.get("content")
         if isinstance(content, list):
             for block in content:
@@ -82,11 +76,8 @@ class HackathonSource(OpportunitySource):
         now = datetime.now(timezone.utc)
         opportunities: list[Opportunity] = []
         for item in payload:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or item.get("cancelled") is True:
                 continue
-            if item.get("cancelled") is True:
-                continue
-
             slug = str(item.get("slug") or item.get("id") or "").strip()
             name = str(item.get("name") or item.get("title") or "").strip()
             starts_at = str(item.get("startsAt") or item.get("starts_at") or item.get("start") or "").strip()
@@ -94,7 +85,6 @@ class HackathonSource(OpportunitySource):
             registration_url = str(item.get("registrationUrl") or item.get("registration_url") or item.get("url") or "").strip()
             if not all((slug, name, starts_at, ends_at, registration_url)):
                 continue
-
             try:
                 end_dt = datetime.fromisoformat(ends_at.replace("Z", "+00:00"))
                 if end_dt.tzinfo is None:
@@ -124,11 +114,7 @@ class HackathonSource(OpportunitySource):
                 location = "Location not listed"
 
             organizer = item.get("organizer")
-            if isinstance(organizer, dict):
-                organizer_name = str(organizer.get("name") or "").strip()
-            else:
-                organizer_name = str(organizer or "").strip()
-
+            organizer_name = str(organizer.get("name") or "").strip() if isinstance(organizer, dict) else str(organizer or "").strip()
             opportunities.append(
                 Opportunity(
                     source=cls.name,

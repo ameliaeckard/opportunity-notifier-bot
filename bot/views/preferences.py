@@ -4,6 +4,7 @@ import discord
 
 from bot.constants import BUG_REPORT_URL
 from bot.database import Database
+from bot.webhooks import send_student_added_webhook
 
 
 def opportunity_prompt_embed() -> discord.Embed:
@@ -29,7 +30,7 @@ def preferences_summary_embed(subscriber) -> discord.Embed:
     return embed
 
 
-async def send_opportunity_setup(interaction: discord.Interaction, database: Database) -> None:
+async def send_opportunity_setup(interaction: discord.Interaction, database: Database, webhook_url: str | None = None) -> None:
     subscriber = database.get_subscriber(interaction.user.id)
     if subscriber and subscriber.opted_in:
         await interaction.response.send_message(
@@ -41,7 +42,7 @@ async def send_opportunity_setup(interaction: discord.Interaction, database: Dat
 
     await interaction.response.send_message(
         embed=opportunity_prompt_embed(),
-        view=OptInView(interaction.user.id, database),
+        view=OptInView(interaction.user.id, database, webhook_url),
         ephemeral=True,
     )
 
@@ -59,16 +60,17 @@ class OwnedView(discord.ui.View):
 
 
 class OptInView(OwnedView):
-    def __init__(self, owner_id: int, database: Database) -> None:
+    def __init__(self, owner_id: int, database: Database, webhook_url: str | None = None) -> None:
         super().__init__(owner_id)
         self.database = database
+        self.webhook_url = webhook_url
 
     @discord.ui.button(label="Yes, send me notifications", style=discord.ButtonStyle.primary)
     async def yes(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         await interaction.response.edit_message(
             content="What would you like to receive?",
             embed=None,
-            view=InterestView(self.owner_id, self.database),
+            view=InterestView(self.owner_id, self.database, self.webhook_url),
         )
 
     @discord.ui.button(label="No thanks", style=discord.ButtonStyle.secondary)
@@ -82,15 +84,16 @@ class OptInView(OwnedView):
 
 
 class InterestView(OwnedView):
-    def __init__(self, owner_id: int, database: Database) -> None:
+    def __init__(self, owner_id: int, database: Database, webhook_url: str | None = None) -> None:
         super().__init__(owner_id)
         self.database = database
+        self.webhook_url = webhook_url
 
     async def _choose(self, interaction: discord.Interaction, internships: bool, hackathons: bool) -> None:
         await interaction.response.edit_message(
             content="How often would you like your private digest?",
             embed=None,
-            view=FrequencyView(self.owner_id, self.database, internships, hackathons),
+            view=FrequencyView(self.owner_id, self.database, internships, hackathons, self.webhook_url),
         )
 
     @discord.ui.button(label="Internships", style=discord.ButtonStyle.secondary)
@@ -107,13 +110,16 @@ class InterestView(OwnedView):
 
 
 class FrequencyView(OwnedView):
-    def __init__(self, owner_id: int, database: Database, internships: bool, hackathons: bool) -> None:
+    def __init__(self, owner_id: int, database: Database, internships: bool, hackathons: bool, webhook_url: str | None = None) -> None:
         super().__init__(owner_id)
         self.database = database
         self.internships = internships
         self.hackathons = hackathons
+        self.webhook_url = webhook_url
 
     async def _save(self, interaction: discord.Interaction, frequency: str) -> None:
+        previous = self.database.get_subscriber(self.owner_id)
+        is_new_student = not previous or not previous.opted_in
         self.database.save_preferences(
             self.owner_id,
             internships=self.internships,
@@ -131,6 +137,14 @@ class FrequencyView(OwnedView):
             embed=None,
             view=None,
         )
+        if is_new_student:
+            await send_student_added_webhook(
+                self.webhook_url,
+                interaction.user,
+                interaction.guild,
+                [category.title() for category in categories],
+                label,
+            )
 
     @discord.ui.button(label="Daily", style=discord.ButtonStyle.primary)
     async def daily(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
@@ -165,17 +179,14 @@ class PreferencesHomeView(OwnedView):
 
 
 class PublicOpportunitySignupView(discord.ui.View):
-    def __init__(self, database: Database) -> None:
+    def __init__(self, database: Database, webhook_url: str | None = None) -> None:
         super().__init__(timeout=None)
         self.database = database
+        self.webhook_url = webhook_url
 
-    @discord.ui.button(
-        label="Set up notifications",
-        style=discord.ButtonStyle.primary,
-        custom_id="scout:public:opportunity_setup",
-    )
+    @discord.ui.button(label="Set up notifications", style=discord.ButtonStyle.primary, custom_id="scout:public:opportunity_setup")
     async def setup(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
-        await send_opportunity_setup(interaction, self.database)
+        await send_opportunity_setup(interaction, self.database, self.webhook_url)
 
 
 class NotificationControlsView(discord.ui.View):
@@ -184,33 +195,15 @@ class NotificationControlsView(discord.ui.View):
         self.database = database
         self.add_item(discord.ui.Button(label="Report Bug", style=discord.ButtonStyle.link, url=BUG_REPORT_URL, row=1))
 
-    @discord.ui.button(
-        label="Preferences",
-        style=discord.ButtonStyle.secondary,
-        custom_id="opportunity_notifier:preferences",
-    )
+    @discord.ui.button(label="Preferences", style=discord.ButtonStyle.secondary, custom_id="opportunity_notifier:preferences")
     async def preferences(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         subscriber = self.database.get_subscriber(interaction.user.id)
         if not subscriber or not subscriber.opted_in:
-            await interaction.response.send_message(
-                "You are not currently subscribed. Run `/opportunities` in the server to opt in.",
-                ephemeral=True,
-            )
+            await interaction.response.send_message("You are not currently subscribed. Run `/opportunities` in the server to opt in.", ephemeral=True)
             return
-        await interaction.response.send_message(
-            "What would you like to receive?",
-            view=InterestView(interaction.user.id, self.database),
-            ephemeral=True,
-        )
+        await interaction.response.send_message("What would you like to receive?", view=InterestView(interaction.user.id, self.database), ephemeral=True)
 
-    @discord.ui.button(
-        label="Unsubscribe",
-        style=discord.ButtonStyle.danger,
-        custom_id="opportunity_notifier:unsubscribe",
-    )
+    @discord.ui.button(label="Unsubscribe", style=discord.ButtonStyle.danger, custom_id="opportunity_notifier:unsubscribe")
     async def unsubscribe(self, interaction: discord.Interaction, _: discord.ui.Button) -> None:
         self.database.opt_out(interaction.user.id)
-        await interaction.response.send_message(
-            "You are unsubscribed. No more opportunity DMs will be sent.",
-            ephemeral=True,
-        )
+        await interaction.response.send_message("You are unsubscribed. No more opportunity DMs will be sent.", ephemeral=True)

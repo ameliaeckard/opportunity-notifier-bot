@@ -57,7 +57,12 @@ class InternshipSource(OpportunitySource):
                     title=title,
                     location=location,
                     url=url,
-                    metadata={"source": item.get("source"), "terms": terms, "date_posted": item.get("date_posted"), "date_updated": item.get("date_updated")},
+                    metadata={
+                        "source": item.get("source"),
+                        "terms": terms,
+                        "date_posted": item.get("date_posted"),
+                        "date_updated": item.get("date_updated"),
+                    },
                 )
             )
         return opportunities

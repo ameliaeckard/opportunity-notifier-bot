@@ -101,10 +101,8 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_opportunities_kind_discovered
                 ON opportunities(kind, discovered_at);
-
                 CREATE INDEX IF NOT EXISTS idx_subscribers_frequency
                 ON subscribers(opted_in, frequency);
-
                 CREATE INDEX IF NOT EXISTS idx_digest_batches_message
                 ON digest_batches(message_id);
                 """
@@ -200,46 +198,89 @@ class Database:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        item.source,
-                        item.external_id,
-                        item.kind,
-                        item.organization,
-                        item.title,
-                        item.location,
-                        item.url,
-                        item.start_date,
-                        item.end_date,
-                        discovered_at,
-                        int(notify_eligible),
-                        json.dumps(item.metadata, ensure_ascii=False),
+                        item.source, item.external_id, item.kind, item.organization, item.title,
+                        item.location, item.url, item.start_date, item.end_date, discovered_at,
+                        int(notify_eligible), json.dumps(item.metadata, ensure_ascii=False),
                     ),
                 )
                 inserted += cursor.rowcount
         return inserted
 
-    def pending_opportunities(self, subscriber: Subscriber, kind: str, limit: int = 10) -> list[Opportunity]:
+    def pending_opportunities(self, subscriber: Subscriber, kind: str, limit: int | None = None) -> list[Opportunity]:
         if not subscriber.opted_in_at:
             return []
+        sql = """
+            SELECT o.*
+            FROM opportunities o
+            WHERE o.kind = ?
+              AND o.notify_eligible = 1
+              AND o.discovered_at >= ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM deliveries d
+                  WHERE d.discord_user_id = ?
+                    AND d.source = o.source
+                    AND d.external_id = o.external_id
+              )
+            ORDER BY o.discovered_at ASC
+        """
+        params: list[object] = [kind, subscriber.opted_in_at, subscriber.discord_user_id]
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(limit)
         with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT o.*
-                FROM opportunities o
-                WHERE o.kind = ?
-                  AND o.notify_eligible = 1
-                  AND o.discovered_at >= ?
-                  AND NOT EXISTS (
-                      SELECT 1 FROM deliveries d
-                      WHERE d.discord_user_id = ?
-                        AND d.source = o.source
-                        AND d.external_id = o.external_id
-                  )
-                ORDER BY o.discovered_at ASC
-                LIMIT ?
-                """,
-                (kind, subscriber.opted_in_at, subscriber.discord_user_id, limit),
-            ).fetchall()
+            rows = conn.execute(sql, params).fetchall()
         return [self._row_to_opportunity(row) for row in rows]
+
+    def pending_opportunities_for_window(
+        self,
+        subscriber: Subscriber,
+        kind: str,
+        window_start_iso: str,
+        window_end_iso: str,
+    ) -> list[Opportunity]:
+        if not subscriber.opted_in_at:
+            return []
+
+        # Hackalendar does not expose a reliable posting-created timestamp, so its
+        # digest window is based on when Scout first discovered the event.
+        if kind == "hackathon":
+            with self._connect() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT o.*
+                    FROM opportunities o
+                    WHERE o.kind = ?
+                      AND o.notify_eligible = 1
+                      AND o.discovered_at >= ?
+                      AND o.discovered_at >= ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM deliveries d
+                          WHERE d.discord_user_id = ?
+                            AND d.source = o.source
+                            AND d.external_id = o.external_id
+                      )
+                    ORDER BY o.discovered_at ASC
+                    """,
+                    (kind, subscriber.opted_in_at, window_start_iso, subscriber.discord_user_id),
+                ).fetchall()
+            return [self._row_to_opportunity(row) for row in rows]
+
+        # SimplifyJobs date_posted is a Unix timestamp. This makes the internship
+        # digest a true noon-to-noon posting window instead of a polling window.
+        window_start = datetime.fromisoformat(window_start_iso).timestamp()
+        window_end = datetime.fromisoformat(window_end_iso).timestamp()
+        candidates = self.pending_opportunities(subscriber, kind)
+        selected: list[Opportunity] = []
+        for item in candidates:
+            raw_posted = item.metadata.get("date_posted")
+            try:
+                posted = float(raw_posted)
+            except (TypeError, ValueError):
+                continue
+            if window_start <= posted < window_end:
+                selected.append(item)
+        selected.sort(key=lambda item: float(item.metadata.get("date_posted") or 0))
+        return selected
 
     def mark_delivered(self, user_id: int, opportunities: list[Opportunity]) -> None:
         if not opportunities:

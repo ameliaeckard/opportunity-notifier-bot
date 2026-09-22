@@ -33,20 +33,28 @@ class OpportunityBot(commands.Bot):
     async def setup_hook(self) -> None:
         self.database.initialize()
         self.add_view(NotificationControlsView(self.database))
-        self.add_view(PublicOpportunitySignupView(self.database))
+        self.add_view(PublicOpportunitySignupView(self.database, self.config.student_added_webhook_url))
         self.add_view(DigestPagerView(self.database))
-        await self.add_cog(OpportunitiesCog(self, self.database, self.source_service))
-        await self.source_service.sync_all()
+        await self.add_cog(
+            OpportunitiesCog(
+                self,
+                self.database,
+                self.source_service,
+                self.config.student_added_webhook_url,
+            )
+        )
 
-        if self.config.discord_guild_id:
-            guild = discord.Object(id=self.config.discord_guild_id)
-            self.tree.copy_global_to(guild=guild)
+        # Scout's active commands are global so the bot works in every guild where
+        # it is installed. If the old single-server ID is still set in Railway,
+        # clear that legacy guild copy to avoid duplicate/stale commands.
+        if self.config.legacy_discord_guild_id:
+            guild = discord.Object(id=self.config.legacy_discord_guild_id)
+            self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
-            logger.info("Slash commands synced to guild %s.", self.config.discord_guild_id)
-        else:
-            await self.tree.sync()
-            logger.info("Global slash commands synced.")
+            logger.info("Cleared legacy guild-scoped commands from guild %s.", self.config.legacy_discord_guild_id)
 
+        await self.tree.sync()
+        logger.info("Global slash commands synced for every server Scout is installed in.")
         self.scheduler.start()
 
     async def close(self) -> None:

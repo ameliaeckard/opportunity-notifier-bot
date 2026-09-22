@@ -6,7 +6,7 @@ from bot.sources.internships import InternshipSource
 
 def test_internship_parser_filters_inactive_and_wrong_term():
     payload = [
-        {"id": "1", "active": True, "is_visible": True, "terms": ["Summer 2027"], "company_name": "NVIDIA", "title": "Software Engineering Intern", "url": "https://example.com/1", "locations": ["Charlotte, NC", "Remote"], "source": "Simplify"},
+        {"id": "1", "active": True, "is_visible": True, "terms": ["Summer 2027"], "company_name": "NVIDIA", "title": "Software Engineering Intern", "url": "https://example.com/1", "locations": ["Charlotte, NC", "Remote"], "source": "Simplify", "date_posted": 1},
         {"id": "2", "active": False, "is_visible": True, "terms": ["Summer 2027"], "company_name": "Old Co", "title": "Intern", "url": "https://example.com/2", "locations": ["Remote"]},
         {"id": "3", "active": True, "is_visible": True, "terms": ["Fall 2027"], "company_name": "Other Co", "title": "Intern", "url": "https://example.com/3", "locations": ["Remote"]},
     ]
@@ -14,6 +14,7 @@ def test_internship_parser_filters_inactive_and_wrong_term():
     assert len(parsed) == 1
     assert parsed[0].organization == "NVIDIA"
     assert parsed[0].location == "Charlotte, NC / Remote"
+    assert parsed[0].metadata["date_posted"] == 1
 
 
 def test_hackathon_parser_keeps_upcoming_event():

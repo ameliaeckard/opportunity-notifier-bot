@@ -1,1 +1,1 @@
-"""Opportunity notifier Discord bot."""
+"""Scout opportunity notifier bot."""
