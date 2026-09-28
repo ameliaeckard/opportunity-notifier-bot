@@ -238,12 +238,19 @@ class Database:
         window_start_iso: str,
         window_end_iso: str,
     ) -> list[Opportunity]:
-        if not subscriber.opted_in_at:
+        """Return undelivered opportunities in [window_start, window_end).
+
+        Scheduled digests use the scheduled period itself, rather than Scout's
+        discovery time relative to when a user opted in. This means a user who
+        subscribes during the period receives that period's digest, while the
+        deliveries table still guarantees that already-sent items are excluded.
+        """
+        if not subscriber.opted_in:
             return []
 
-        # Hackalendar does not expose a reliable posting-created timestamp, so its
-        # digest window is based on when Scout first discovered the event.
         if kind == "hackathon":
+            # Hackalendar does not expose a reliable created/posted timestamp,
+            # so the best stable digest clock is Scout's first discovery time.
             with self._connect() as conn:
                 rows = conn.execute(
                     """
@@ -252,7 +259,7 @@ class Database:
                     WHERE o.kind = ?
                       AND o.notify_eligible = 1
                       AND o.discovered_at >= ?
-                      AND o.discovered_at >= ?
+                      AND o.discovered_at < ?
                       AND NOT EXISTS (
                           SELECT 1 FROM deliveries d
                           WHERE d.discord_user_id = ?
@@ -261,17 +268,34 @@ class Database:
                       )
                     ORDER BY o.discovered_at ASC
                     """,
-                    (kind, subscriber.opted_in_at, window_start_iso, subscriber.discord_user_id),
+                    (kind, window_start_iso, window_end_iso, subscriber.discord_user_id),
                 ).fetchall()
             return [self._row_to_opportunity(row) for row in rows]
 
-        # SimplifyJobs date_posted is a Unix timestamp. This makes the internship
-        # digest a true noon-to-noon posting window instead of a polling window.
+        # SimplifyJobs date_posted is a Unix timestamp, so internship digests
+        # use the source posting time rather than Scout's polling/discovery time.
         window_start = datetime.fromisoformat(window_start_iso).timestamp()
         window_end = datetime.fromisoformat(window_end_iso).timestamp()
-        candidates = self.pending_opportunities(subscriber, kind)
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT o.*
+                FROM opportunities o
+                WHERE o.kind = ?
+                  AND o.notify_eligible = 1
+                  AND NOT EXISTS (
+                      SELECT 1 FROM deliveries d
+                      WHERE d.discord_user_id = ?
+                        AND d.source = o.source
+                        AND d.external_id = o.external_id
+                  )
+                """,
+                (kind, subscriber.discord_user_id),
+            ).fetchall()
+
         selected: list[Opportunity] = []
-        for item in candidates:
+        for row in rows:
+            item = self._row_to_opportunity(row)
             raw_posted = item.metadata.get("date_posted")
             try:
                 posted = float(raw_posted)
@@ -294,9 +318,13 @@ class Database:
                 """,
                 [(user_id, item.source, item.external_id, delivered_at) for item in opportunities],
             )
+
+    def mark_notification_sent(self, user_id: int) -> None:
+        notified_at = utc_now_iso()
+        with self._connect() as conn:
             conn.execute(
                 "UPDATE subscribers SET last_notification = ?, updated_at = ? WHERE discord_user_id = ?",
-                (delivered_at, delivered_at, user_id),
+                (notified_at, notified_at, user_id),
             )
 
     def create_digest_batch(self, user_id: int, kind: str, frequency: str, items: list[Opportunity]) -> str:
@@ -360,6 +388,23 @@ class Database:
     def mark_scheduler_run(self, run_key: str) -> None:
         with self._connect() as conn:
             conn.execute("INSERT OR IGNORE INTO scheduler_runs(run_key, ran_at) VALUES (?, ?)", (run_key, utc_now_iso()))
+
+    def latest_scheduler_run_date(self, frequency: str, schedule_tag: str) -> str | None:
+        prefix = f"{frequency}:{schedule_tag}:"
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT run_key
+                FROM scheduler_runs
+                WHERE run_key LIKE ?
+                ORDER BY run_key DESC
+                LIMIT 1
+                """,
+                (f"{prefix}%",),
+            ).fetchone()
+        if not row:
+            return None
+        return str(row["run_key"])[len(prefix):]
 
     @staticmethod
     def _row_to_subscriber(row: sqlite3.Row) -> Subscriber:

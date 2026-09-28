@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import discord
@@ -9,6 +9,7 @@ from discord.ext import tasks
 
 from bot.config import Config
 from bot.database import Database
+from bot.digest_windows import boundary_from_run_date, latest_due_boundary, previous_period_start
 from bot.models import Opportunity
 from bot.notifications import digest_embed, page_count
 from bot.source_service import SourceService
@@ -40,10 +41,12 @@ class BackgroundScheduler:
             return
 
         schedule_tag = f"{self.config.digest_hour_local:02d}00"
-        daily_key = f"daily:{schedule_tag}:{now.date().isoformat()}"
-        weekly_key = f"weekly:{schedule_tag}:{now.date().isoformat()}"
+        daily_end = latest_due_boundary(now, "daily", self.config.digest_hour_local, self.zone)
+        weekly_end = latest_due_boundary(now, "weekly", self.config.digest_hour_local, self.zone)
+        daily_key = f"daily:{schedule_tag}:{daily_end.date().isoformat()}"
+        weekly_key = f"weekly:{schedule_tag}:{weekly_end.date().isoformat()}"
         run_daily = not self.database.scheduler_run_exists(daily_key)
-        run_weekly = now.weekday() == 6 and not self.database.scheduler_run_exists(weekly_key)
+        run_weekly = not self.database.scheduler_run_exists(weekly_key)
         if not run_daily and not run_weekly:
             return
 
@@ -56,20 +59,29 @@ class BackgroundScheduler:
             logger.warning("Not every source completed the scheduled refresh. Missing: %s", sorted(expected_sources - checked_sources))
 
         if run_daily:
-            window_start = scheduled_today - timedelta(days=1)
-            delivered = await self._send_frequency("daily", window_start, scheduled_today)
+            window_start = self._window_start("daily", schedule_tag, daily_end)
+            delivered = await self._send_frequency("daily", window_start, daily_end)
             if delivered and all_sources_checked:
                 self.database.mark_scheduler_run(daily_key)
             else:
                 logger.warning("Daily noon digest remains pending and will retry on the next scheduler check.")
 
         if run_weekly:
-            window_start = scheduled_today - timedelta(days=7)
-            delivered = await self._send_frequency("weekly", window_start, scheduled_today)
+            window_start = self._window_start("weekly", schedule_tag, weekly_end)
+            delivered = await self._send_frequency("weekly", window_start, weekly_end)
             if delivered and all_sources_checked:
                 self.database.mark_scheduler_run(weekly_key)
             else:
-                logger.warning("Weekly Sunday digest remains pending and will retry on the next scheduler check.")
+                logger.warning("Weekly Monday noon digest remains pending and will retry on the next scheduler check.")
+
+    def _window_start(self, frequency: str, schedule_tag: str, window_end: datetime) -> datetime:
+        last_run_date = self.database.latest_scheduler_run_date(frequency, schedule_tag)
+        if not last_run_date:
+            return previous_period_start(window_end, frequency)
+        last_boundary = boundary_from_run_date(last_run_date, self.config.digest_hour_local, self.zone)
+        if last_boundary >= window_end:
+            return previous_period_start(window_end, frequency)
+        return last_boundary
 
     @digest_check.before_loop
     async def before_digest_check(self) -> None:
@@ -85,6 +97,7 @@ class BackgroundScheduler:
             window_end.isoformat(),
         )
         all_transient_sends_succeeded = True
+
         for subscriber in subscribers:
             window_start_iso = window_start.astimezone(timezone.utc).isoformat()
             window_end_iso = window_end.astimezone(timezone.utc).isoformat()
@@ -96,8 +109,16 @@ class BackgroundScheduler:
                 self.database.pending_opportunities_for_window(subscriber, "hackathon", window_start_iso, window_end_iso)
                 if subscriber.hackathons_enabled else []
             )
-            if not internships and not hackathons:
-                continue
+
+            logger.info(
+                "%s subscriber %s selection: internships=%s, hackathons=%s, internship_enabled=%s, hackathon_enabled=%s.",
+                frequency.capitalize(),
+                subscriber.discord_user_id,
+                len(internships),
+                len(hackathons),
+                subscriber.internships_enabled,
+                subscriber.hackathons_enabled,
+            )
 
             try:
                 user = self.bot.get_user(subscriber.discord_user_id) or await self.bot.fetch_user(subscriber.discord_user_id)
@@ -106,15 +127,62 @@ class BackgroundScheduler:
                 all_transient_sends_succeeded = False
                 continue
 
+            # A successful empty digest makes it clear the noon job actually ran.
+            if not internships and not hackathons:
+                result = await self._send_empty_digest(user, subscriber.discord_user_id, frequency)
+                if result == "sent":
+                    self.database.mark_notification_sent(subscriber.discord_user_id)
+                elif result == "retry":
+                    all_transient_sends_succeeded = False
+                continue
+
+            sent_any = False
+            subscriber_complete = True
+
             if internships:
                 result = await self._send_category(user, subscriber.discord_user_id, "internship", internships, frequency)
+                sent_any = sent_any or result == "sent"
+                if result != "sent":
+                    subscriber_complete = False
                 if result == "retry":
                     all_transient_sends_succeeded = False
+
             if hackathons:
                 result = await self._send_category(user, subscriber.discord_user_id, "hackathon", hackathons, frequency)
+                sent_any = sent_any or result == "sent"
+                if result != "sent":
+                    subscriber_complete = False
                 if result == "retry":
                     all_transient_sends_succeeded = False
+
+            if sent_any and subscriber_complete:
+                self.database.mark_notification_sent(subscriber.discord_user_id)
+
         return all_transient_sends_succeeded
+
+    async def _send_empty_digest(self, user: discord.User, user_id: int, frequency: str) -> str:
+        try:
+            label = "Daily" if frequency == "daily" else "Weekly"
+            embed = discord.Embed(
+                title=f"{label} Scout Digest",
+                description="No new opportunities were found for your selected categories in this digest period.",
+            )
+            if frequency == "daily":
+                embed.set_footer(text="Daily digest • Scout will check again tomorrow at 12 PM")
+            else:
+                embed.set_footer(text="Weekly digest • Scout will check again Monday at 12 PM")
+            await user.send(embed=embed)
+            logger.info("Delivered empty %s digest to user %s.", frequency, user_id)
+            return "sent"
+        except discord.Forbidden:
+            logger.warning("Could not DM user %s because Discord blocked the DM. Not retrying this minute.", user_id)
+            return "blocked"
+        except discord.HTTPException:
+            logger.exception("Discord API error while messaging user %s.", user_id)
+            return "retry"
+        except Exception:
+            logger.exception("Unexpected error while messaging user %s.", user_id)
+            return "retry"
 
     async def _send_category(self, user: discord.User, user_id: int, kind: str, items: list[Opportunity], frequency: str) -> str:
         try:
