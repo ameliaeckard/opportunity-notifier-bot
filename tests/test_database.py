@@ -35,7 +35,7 @@ def test_initial_source_baseline_is_not_notified(tmp_path):
     assert database.pending_opportunities(subscriber, "internship") == []
 
 
-def test_internship_window_uses_date_posted_not_discovery_time(tmp_path):
+def test_internship_window_uses_scout_discovery_time(tmp_path):
     database = Database(str(tmp_path / "test.db"))
     database.initialize()
     database.save_preferences(777, internships=True, hackathons=False, frequency="daily")
@@ -44,14 +44,27 @@ def test_internship_window_uses_date_posted_not_discovery_time(tmp_path):
 
     end = datetime.now(timezone.utc) + timedelta(hours=1)
     start = end - timedelta(days=1)
-    inside = start + timedelta(hours=4)
-    too_old = start - timedelta(hours=1)
-    items = [
-        Opportunity(source="simplifyjobs", external_id="inside", kind="internship", organization="Inside Co", title="Intern", location="Remote", url="https://example.com/inside", metadata={"date_posted": inside.timestamp()}),
-        Opportunity(source="simplifyjobs", external_id="old", kind="internship", organization="Old Co", title="Intern", location="Remote", url="https://example.com/old", metadata={"date_posted": too_old.timestamp()}),
-    ]
-    database.store_opportunities(items, notify_eligible=True)
-    pending = database.pending_opportunities_for_window(subscriber, "internship", start.isoformat(), end.isoformat())
+    item = Opportunity(
+        source="simplifyjobs",
+        external_id="inside",
+        kind="internship",
+        organization="Inside Co",
+        title="Intern",
+        location="Remote",
+        url="https://example.com/inside",
+        metadata={"date_posted": (start - timedelta(days=30)).timestamp()},
+    )
+    database.store_opportunities(
+        [item],
+        notify_eligible=True,
+        discovered_at=(start + timedelta(hours=4)).isoformat(),
+    )
+    pending = database.pending_opportunities_for_window(
+        subscriber,
+        "internship",
+        start.isoformat(),
+        end.isoformat(),
+    )
     assert [item.external_id for item in pending] == ["inside"]
 
 

@@ -7,7 +7,6 @@ WEEKLY_WEEKDAY = 0  # Monday
 
 
 def latest_daily_boundary(now: datetime, digest_hour_local: int) -> datetime:
-    """Return the latest local daily noon-style boundary that is due."""
     boundary = now.replace(hour=digest_hour_local, minute=0, second=0, microsecond=0)
     if now < boundary:
         boundary -= timedelta(days=1)
@@ -15,7 +14,6 @@ def latest_daily_boundary(now: datetime, digest_hour_local: int) -> datetime:
 
 
 def latest_weekly_boundary(now: datetime, digest_hour_local: int, weekday: int = WEEKLY_WEEKDAY) -> datetime:
-    """Return the latest due weekly boundary in the same timezone as ``now``."""
     today_boundary = now.replace(hour=digest_hour_local, minute=0, second=0, microsecond=0)
     days_since_target = (now.weekday() - weekday) % 7
     boundary = today_boundary - timedelta(days=days_since_target)

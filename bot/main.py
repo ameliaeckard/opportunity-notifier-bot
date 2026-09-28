@@ -14,7 +14,10 @@ from bot.scheduler import BackgroundScheduler
 from bot.source_service import SourceService
 from bot.sources import HackathonSource, InternshipSource
 from bot.views.digests import DigestPagerView
-from bot.views.preferences import NotificationControlsView, PublicOpportunitySignupView
+from bot.views.preferences import (
+    NotificationControlsView,
+    PublicOpportunitySignupView,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -24,34 +27,51 @@ class OpportunityBot(commands.Bot):
     def __init__(self, config: Config) -> None:
         intents = discord.Intents.none()
         intents.guilds = True
-        super().__init__(command_prefix=commands.when_mentioned, intents=intents)
+        super().__init__(
+            command_prefix=commands.when_mentioned,
+            intents=intents,
+        )
         self.config = config
         self.database = Database(config.database_path)
-        self.source_service = SourceService(self.database, [InternshipSource(), HackathonSource()])
-        self.scheduler = BackgroundScheduler(self, config, self.database, self.source_service)
+        self.source_service = SourceService(
+            self.database,
+            [InternshipSource(), HackathonSource()],
+        )
+        self.scheduler = BackgroundScheduler(
+            self,
+            config,
+            self.database,
+            self.source_service,
+        )
 
     async def setup_hook(self) -> None:
         self.database.initialize()
         self.add_view(NotificationControlsView(self.database))
-        self.add_view(PublicOpportunitySignupView(self.database, self.config.student_added_webhook_url))
+        self.add_view(
+            PublicOpportunitySignupView(
+                self.database,
+                self.config.student_added_webhook_url,
+            )
+        )
         self.add_view(DigestPagerView(self.database))
         await self.add_cog(
             OpportunitiesCog(
                 self,
                 self.database,
                 self.source_service,
+                self.scheduler,
                 self.config.student_added_webhook_url,
             )
         )
 
-        # Scout's active commands are global so the bot works in every guild where
-        # it is installed. If the old single-server ID is still set in Railway,
-        # clear that legacy guild copy to avoid duplicate/stale commands.
         if self.config.legacy_discord_guild_id:
             guild = discord.Object(id=self.config.legacy_discord_guild_id)
             self.tree.clear_commands(guild=guild)
             await self.tree.sync(guild=guild)
-            logger.info("Cleared legacy guild-scoped commands from guild %s.", self.config.legacy_discord_guild_id)
+            logger.info(
+                "Cleared legacy guild-scoped commands from guild %s.",
+                self.config.legacy_discord_guild_id,
+            )
 
         await self.tree.sync()
         logger.info("Global slash commands synced for every server Scout is installed in.")
@@ -62,11 +82,18 @@ class OpportunityBot(commands.Bot):
         await super().close()
 
     async def on_ready(self) -> None:
-        logger.info("Logged in as %s (%s).", self.user, self.user.id if self.user else "unknown")
+        logger.info(
+            "Logged in as %s (%s).",
+            self.user,
+            self.user.id if self.user else "unknown",
+        )
 
 
 def configure_logging(level: str) -> None:
-    logging.basicConfig(level=getattr(logging, level, logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=getattr(logging, level, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 def main() -> None:
@@ -80,10 +107,16 @@ def main() -> None:
             bot.run(config.discord_token, log_handler=None)
             return
         except discord.LoginFailure:
-            logger.critical("Discord rejected the bot token. Check DISCORD_TOKEN before restarting Scout.")
+            logger.critical(
+                "Discord rejected the bot token. Check DISCORD_TOKEN before restarting Scout."
+            )
             raise
         except (discord.HTTPException, aiohttp.ClientError) as exc:
-            logger.warning("Discord startup failed with %s. Scout will retry in %s seconds.", type(exc).__name__, retry_seconds)
+            logger.warning(
+                "Discord startup failed with %s. Scout will retry in %s seconds.",
+                type(exc).__name__,
+                retry_seconds,
+            )
             time.sleep(retry_seconds)
             retry_seconds = min(retry_seconds * 2, 900)
 

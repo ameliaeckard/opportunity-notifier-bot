@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bot.models import Opportunity, Subscriber
@@ -159,7 +159,10 @@ class Database:
 
     def subscribers_for_frequency(self, frequency: str) -> list[Subscriber]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT * FROM subscribers WHERE opted_in = 1 AND frequency = ?", (frequency,)).fetchall()
+            rows = conn.execute(
+                "SELECT * FROM subscribers WHERE opted_in = 1 AND frequency = ?",
+                (frequency,),
+            ).fetchall()
         return [self._row_to_subscriber(row) for row in rows]
 
     def opportunity_count(self, source: str) -> int:
@@ -185,9 +188,14 @@ class Database:
                 (source, int(initialized), utc_now_iso()),
             )
 
-    def store_opportunities(self, opportunities: list[Opportunity], notify_eligible: bool) -> int:
+    def store_opportunities(
+        self,
+        opportunities: list[Opportunity],
+        notify_eligible: bool,
+        discovered_at: str | None = None,
+    ) -> int:
         inserted = 0
-        discovered_at = utc_now_iso()
+        discovery_time = discovered_at or utc_now_iso()
         with self._connect() as conn:
             for item in opportunities:
                 cursor = conn.execute(
@@ -198,15 +206,29 @@ class Database:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        item.source, item.external_id, item.kind, item.organization, item.title,
-                        item.location, item.url, item.start_date, item.end_date, discovered_at,
-                        int(notify_eligible), json.dumps(item.metadata, ensure_ascii=False),
+                        item.source,
+                        item.external_id,
+                        item.kind,
+                        item.organization,
+                        item.title,
+                        item.location,
+                        item.url,
+                        item.start_date,
+                        item.end_date,
+                        discovery_time,
+                        int(notify_eligible),
+                        json.dumps(item.metadata, ensure_ascii=False),
                     ),
                 )
                 inserted += cursor.rowcount
         return inserted
 
-    def pending_opportunities(self, subscriber: Subscriber, kind: str, limit: int | None = None) -> list[Opportunity]:
+    def pending_opportunities(
+        self,
+        subscriber: Subscriber,
+        kind: str,
+        limit: int | None = None,
+    ) -> list[Opportunity]:
         if not subscriber.opted_in_at:
             return []
         sql = """
@@ -238,44 +260,10 @@ class Database:
         window_start_iso: str,
         window_end_iso: str,
     ) -> list[Opportunity]:
-        """Return undelivered opportunities in [window_start, window_end).
-
-        Scheduled digests use the scheduled period itself, rather than Scout's
-        discovery time relative to when a user opted in. This means a user who
-        subscribes during the period receives that period's digest, while the
-        deliveries table still guarantees that already-sent items are excluded.
-        """
+        """Return undelivered opportunities Scout first saw in (start, end]."""
         if not subscriber.opted_in:
             return []
 
-        if kind == "hackathon":
-            # Hackalendar does not expose a reliable created/posted timestamp,
-            # so the best stable digest clock is Scout's first discovery time.
-            with self._connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT o.*
-                    FROM opportunities o
-                    WHERE o.kind = ?
-                      AND o.notify_eligible = 1
-                      AND o.discovered_at >= ?
-                      AND o.discovered_at < ?
-                      AND NOT EXISTS (
-                          SELECT 1 FROM deliveries d
-                          WHERE d.discord_user_id = ?
-                            AND d.source = o.source
-                            AND d.external_id = o.external_id
-                      )
-                    ORDER BY o.discovered_at ASC
-                    """,
-                    (kind, window_start_iso, window_end_iso, subscriber.discord_user_id),
-                ).fetchall()
-            return [self._row_to_opportunity(row) for row in rows]
-
-        # SimplifyJobs date_posted is a Unix timestamp, so internship digests
-        # use the source posting time rather than Scout's polling/discovery time.
-        window_start = datetime.fromisoformat(window_start_iso).timestamp()
-        window_end = datetime.fromisoformat(window_end_iso).timestamp()
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -283,28 +271,35 @@ class Database:
                 FROM opportunities o
                 WHERE o.kind = ?
                   AND o.notify_eligible = 1
+                  AND o.discovered_at > ?
+                  AND o.discovered_at <= ?
                   AND NOT EXISTS (
                       SELECT 1 FROM deliveries d
                       WHERE d.discord_user_id = ?
                         AND d.source = o.source
                         AND d.external_id = o.external_id
                   )
+                ORDER BY o.discovered_at ASC
                 """,
-                (kind, subscriber.discord_user_id),
+                (kind, window_start_iso, window_end_iso, subscriber.discord_user_id),
             ).fetchall()
+        return [self._row_to_opportunity(row) for row in rows]
 
-        selected: list[Opportunity] = []
-        for row in rows:
-            item = self._row_to_opportunity(row)
-            raw_posted = item.metadata.get("date_posted")
-            try:
-                posted = float(raw_posted)
-            except (TypeError, ValueError):
-                continue
-            if window_start <= posted < window_end:
-                selected.append(item)
-        selected.sort(key=lambda item: float(item.metadata.get("date_posted") or 0))
-        return selected
+    def align_recent_discoveries_to_boundary(self, boundary_iso: str, grace_seconds: int = 300) -> None:
+        """Repair records discovered seconds after a noon boundary by an older build."""
+        boundary = datetime.fromisoformat(boundary_iso)
+        grace_end = (boundary + timedelta(seconds=grace_seconds)).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE opportunities
+                SET discovered_at = ?
+                WHERE notify_eligible = 1
+                  AND discovered_at > ?
+                  AND discovered_at <= ?
+                """,
+                (boundary_iso, boundary_iso, grace_end),
+            )
 
     def mark_delivered(self, user_id: int, opportunities: list[Opportunity]) -> None:
         if not opportunities:
@@ -327,14 +322,22 @@ class Database:
                 (notified_at, notified_at, user_id),
             )
 
-    def create_digest_batch(self, user_id: int, kind: str, frequency: str, items: list[Opportunity]) -> str:
+    def create_digest_batch(
+        self,
+        user_id: int,
+        kind: str,
+        frequency: str,
+        items: list[Opportunity],
+    ) -> str:
         if not items:
             raise ValueError("A digest batch requires at least one opportunity.")
         digest_id = uuid.uuid4().hex
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO digest_batches(digest_id, discord_user_id, kind, frequency, current_page, created_at)
+                INSERT INTO digest_batches(
+                    digest_id, discord_user_id, kind, frequency, current_page, created_at
+                )
                 VALUES (?, ?, ?, ?, 0, ?)
                 """,
                 (digest_id, user_id, kind, frequency, utc_now_iso()),
@@ -344,28 +347,41 @@ class Database:
                 INSERT INTO digest_items(digest_id, position, source, external_id)
                 VALUES (?, ?, ?, ?)
                 """,
-                [(digest_id, index, item.source, item.external_id) for index, item in enumerate(items)],
+                [
+                    (digest_id, index, item.source, item.external_id)
+                    for index, item in enumerate(items)
+                ],
             )
         return digest_id
 
     def attach_digest_message(self, digest_id: str, message_id: int) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE digest_batches SET message_id = ? WHERE digest_id = ?", (message_id, digest_id))
+            conn.execute(
+                "UPDATE digest_batches SET message_id = ? WHERE digest_id = ?",
+                (message_id, digest_id),
+            )
 
     def set_digest_page(self, digest_id: str, page: int) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE digest_batches SET current_page = ? WHERE digest_id = ?", (page, digest_id))
+            conn.execute(
+                "UPDATE digest_batches SET current_page = ? WHERE digest_id = ?",
+                (page, digest_id),
+            )
 
     def get_digest_by_message(self, message_id: int) -> dict[str, object] | None:
         with self._connect() as conn:
-            batch = conn.execute("SELECT * FROM digest_batches WHERE message_id = ?", (message_id,)).fetchone()
+            batch = conn.execute(
+                "SELECT * FROM digest_batches WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
             if not batch:
                 return None
             rows = conn.execute(
                 """
                 SELECT o.*
                 FROM digest_items di
-                JOIN opportunities o ON o.source = di.source AND o.external_id = di.external_id
+                JOIN opportunities o
+                  ON o.source = di.source AND o.external_id = di.external_id
                 WHERE di.digest_id = ?
                 ORDER BY di.position ASC
                 """,
@@ -382,29 +398,18 @@ class Database:
 
     def scheduler_run_exists(self, run_key: str) -> bool:
         with self._connect() as conn:
-            row = conn.execute("SELECT 1 FROM scheduler_runs WHERE run_key = ?", (run_key,)).fetchone()
+            row = conn.execute(
+                "SELECT 1 FROM scheduler_runs WHERE run_key = ?",
+                (run_key,),
+            ).fetchone()
         return row is not None
 
     def mark_scheduler_run(self, run_key: str) -> None:
         with self._connect() as conn:
-            conn.execute("INSERT OR IGNORE INTO scheduler_runs(run_key, ran_at) VALUES (?, ?)", (run_key, utc_now_iso()))
-
-    def latest_scheduler_run_date(self, frequency: str, schedule_tag: str) -> str | None:
-        prefix = f"{frequency}:{schedule_tag}:"
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT run_key
-                FROM scheduler_runs
-                WHERE run_key LIKE ?
-                ORDER BY run_key DESC
-                LIMIT 1
-                """,
-                (f"{prefix}%",),
-            ).fetchone()
-        if not row:
-            return None
-        return str(row["run_key"])[len(prefix):]
+            conn.execute(
+                "INSERT OR IGNORE INTO scheduler_runs(run_key, ran_at) VALUES (?, ?)",
+                (run_key, utc_now_iso()),
+            )
 
     @staticmethod
     def _row_to_subscriber(row: sqlite3.Row) -> Subscriber:

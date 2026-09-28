@@ -8,26 +8,33 @@ Scout is a Discord bot for opt-in internship and hackathon notifications.
 - `/postopportunities` lets a server manager post Scout's reusable signup panel.
 - `/unsubscribe` immediately stops notification DMs.
 - `/testrecent` lets a server administrator do an on-demand live source preview without affecting delivery history.
-- Scout's slash commands are registered **globally**, so it works in every server where the bot is installed.
+- `/send` lets a server administrator manually send the current digest to all opted-in subscribers.
+- Scout's slash commands are registered globally, so it works in every server where the bot is installed.
 - Users choose Internships, Hackathons, or Both, and Daily or Weekly delivery.
-- Digests are sent privately by DM and show **5 listings per page** with Previous/Next controls.
-- There is no 25-listing cap on scheduled digests; every matching undelivered item in the digest window is retained in the paginated digest.
+- Digests are sent privately by DM and show 5 listings per page with Previous/Next controls.
+- There is no 25-listing cap on scheduled digests.
 
 ## Noon schedule
 
-Scout no longer polls its sources every 15 or 60 minutes.
+Scout refreshes its sources once per day at **12:00 PM** in `BOT_TIMEZONE` (default `America/New_York`).
 
-The automatic source refresh happens once per day at **12:00 PM** in `BOT_TIMEZONE` (default `America/New_York`). Daily internship digests use the source listing's own SimplifyJobs `date_posted` Unix timestamp and include postings in the window:
+A "new opportunity" means an opportunity Scout first discovers from its sources.
+
+Daily subscribers receive opportunities Scout first saw during:
 
 ```text
-previous day at 12:00 PM <= date_posted < current day at 12:00 PM
+previous day at 12:00 PM < discovered_at <= current day at 12:00 PM
 ```
 
-Weekly subscribers receive the equivalent seven-day Sunday-noon window. Hackalendar does not provide a reliable posting-created timestamp, so hackathons use Scout's first-discovered timestamp for their daily/weekly window.
+Weekly subscribers receive opportunities Scout first saw during:
 
-If Scout restarts after noon before that day's digest completed, the scheduler catches up. The scheduler key includes the noon schedule, so an older 9 AM run marker cannot block the new noon run.
+```text
+previous Monday at 12:00 PM < discovered_at <= current Monday at 12:00 PM
+```
 
-Temporary Discord/API send failures leave the scheduled run pending so Scout can retry. Listings already delivered are protected by the delivery table and are not duplicated on retry.
+The scheduled noon refresh stamps newly discovered records at the noon boundary before digest selection. This means an item fetched a few seconds after the scheduler wakes up still belongs to the digest being sent at that noon boundary.
+
+Listings already delivered to a user are protected by the delivery table and are not duplicated on retry or manual `/send`.
 
 ## Student Added webhook
 
@@ -62,8 +69,6 @@ DATABASE_PATH=/data/opportunity_notifier.db
 ```
 
 Keep the service at one replica while using SQLite.
-
-The old `DIGEST_HOUR_LOCAL` and `SOURCE_POLL_MINUTES` values are no longer used by this build. You can remove them from Railway after replacing the code.
 
 ## Local setup
 

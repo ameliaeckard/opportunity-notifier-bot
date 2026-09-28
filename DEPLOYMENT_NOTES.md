@@ -9,4 +9,4 @@
 7. The old `DIGEST_HOUR_LOCAL` and `SOURCE_POLL_MINUTES` variables are ignored and can be deleted.
 8. If `DISCORD_GUILD_ID` is still set from the old single-server deployment, leave it for the first deploy so Scout can clear the old guild-scoped commands. After a successful deploy, it can be removed because commands are global.
 
-Scheduled automatic source collection now happens once at noon. `/testrecent` still performs an on-demand live read when an administrator explicitly runs it.
+Scheduled automatic source collection happens once at noon. `/testrecent` still performs an on-demand live read when an administrator explicitly runs it. `/send` manually sends the current daily/weekly digest windows to all opted-in subscribers.

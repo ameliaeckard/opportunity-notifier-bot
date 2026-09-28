@@ -22,7 +22,7 @@ def preferences_summary_embed(subscriber) -> discord.Embed:
         categories.append("Internships")
     if subscriber.hackathons_enabled:
         categories.append("Hackathons")
-    frequency = "Daily" if subscriber.frequency == "daily" else "Weekly on Sundays"
+    frequency = "Daily" if subscriber.frequency == "daily" else "Weekly on Mondays"
     embed = discord.Embed(title="Opportunity Notifications")
     embed.add_field(name="Receiving", value=" and ".join(categories) or "Nothing", inline=False)
     embed.add_field(name="Frequency", value=frequency, inline=False)
@@ -126,7 +126,7 @@ class FrequencyView(OwnedView):
             hackathons=self.hackathons,
             frequency=frequency,
         )
-        label = "Daily" if frequency == "daily" else "Weekly on Sundays"
+        label = "Daily" if frequency == "daily" else "Weekly on Mondays"
         categories = []
         if self.internships:
             categories.append("internships")

@@ -34,11 +34,21 @@ class SourceService:
                     logger.exception("Failed to fetch source %s.", source.name)
         return results
 
-    async def sync_all(self, minimum_gap_seconds: int = 300) -> dict[str, int]:
+    async def sync_all(
+        self,
+        minimum_gap_seconds: int = 300,
+        discovered_at: str | None = None,
+    ) -> dict[str, int]:
         async with self._sync_lock:
             now = time.monotonic()
-            if self._last_sync_monotonic is not None and now - self._last_sync_monotonic < minimum_gap_seconds:
-                logger.info("Skipping source refresh because Scout checked less than %s seconds ago.", minimum_gap_seconds)
+            if (
+                self._last_sync_monotonic is not None
+                and now - self._last_sync_monotonic < minimum_gap_seconds
+            ):
+                logger.info(
+                    "Skipping source refresh because Scout checked less than %s seconds ago.",
+                    minimum_gap_seconds,
+                )
                 return {}
 
             fetched = await self.fetch_current()
@@ -46,9 +56,14 @@ class SourceService:
             for source in self.sources:
                 if source.name not in fetched:
                     continue
+
                 opportunities = fetched[source.name]
                 if not opportunities:
-                    logger.warning("Source %s returned 0 usable current opportunities. Keeping existing source state unchanged.", source.name)
+                    logger.warning(
+                        "Source %s returned 0 usable current opportunities. "
+                        "Keeping existing source state unchanged.",
+                        source.name,
+                    )
                     results[source.name] = 0
                     continue
 
@@ -56,16 +71,35 @@ class SourceService:
                 existing_count = self.database.opportunity_count(source.name)
                 recovering_empty_baseline = initialized and existing_count == 0
                 notify_eligible = initialized and not recovering_empty_baseline
-                inserted = self.database.store_opportunities(opportunities, notify_eligible=notify_eligible)
+
+                inserted = self.database.store_opportunities(
+                    opportunities,
+                    notify_eligible=notify_eligible,
+                    discovered_at=discovered_at,
+                )
                 self.database.mark_source_checked(source.name, initialized=True)
                 results[source.name] = inserted
 
                 if not initialized:
-                    logger.info("Source %s baseline created with %s current opportunities.", source.name, len(opportunities))
+                    logger.info(
+                        "Source %s baseline created with %s current opportunities.",
+                        source.name,
+                        len(opportunities),
+                    )
                 elif recovering_empty_baseline:
-                    logger.info("Source %s recovered from an empty baseline with %s current opportunities. They were baselined without notifications.", source.name, len(opportunities))
+                    logger.info(
+                        "Source %s recovered from an empty baseline with %s current "
+                        "opportunities. They were baselined without notifications.",
+                        source.name,
+                        len(opportunities),
+                    )
                 else:
-                    logger.info("Source %s checked: %s current opportunities, %s unseen additions.", source.name, len(opportunities), inserted)
+                    logger.info(
+                        "Source %s checked: %s current opportunities, %s unseen additions.",
+                        source.name,
+                        len(opportunities),
+                        inserted,
+                    )
 
             self._last_sync_monotonic = time.monotonic()
             return results

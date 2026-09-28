@@ -25,8 +25,6 @@ class Config:
         if not token:
             raise RuntimeError("DISCORD_TOKEN is required.")
 
-        # Kept only so an older guild-scoped command deployment can be cleared.
-        # Scout always registers its active commands globally.
         legacy_guild_id_raw = os.getenv("DISCORD_GUILD_ID", "").strip()
         legacy_guild_id = int(legacy_guild_id_raw) if legacy_guild_id_raw else None
 
