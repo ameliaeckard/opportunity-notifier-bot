@@ -1,5 +1,7 @@
 # Scout _(opportunity-notifier-bot)_
 
+Lab report: [Scout Opportunity Notifier](https://lab.ameliaeckard.com/notes/2026-10-08-scout)
+
 An opt-in opportunity delivery service for personalized internship and hackathon discovery through Discord.
 
 ## Background
@@ -38,7 +40,3 @@ Users can opt into internships, hackathons, or both and choose daily or weekly p
 ## Contributing
 
 Issues are welcome for bugs or documentation problems. Please open an issue before a substantial pull request.
-
-## License
-
-UNLICENSED © Amelia Eckard.
